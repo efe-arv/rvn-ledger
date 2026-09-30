@@ -1,0 +1,89 @@
+"""Account-local half-open periods, with elapsed-time late-arrival limits."""
+from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone
+from functools import lru_cache
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
+from .inputs import InputError, local_date
+from .validation import ValidatedEvent
+
+PERIOD_KEYS = ('period_start_local', 'period_end_local_exclusive', 'late_cutoff_hours_after_period_end')
+# Keys the tzdata tree may resolve but that do not name a real place: 'localtime' is the
+# host's own zone, 'posixrules' and 'Factory' are build artefacts. Billing on them would
+# depend on the server, so they are unusable configuration even where ZoneInfo accepts them.
+HOST_DEPENDENT_ZONE_KEYS = frozenset({'localtime', 'posixrules', 'Factory'})
+
+
+@lru_cache(maxsize=1)
+def iana_zone_keys() -> frozenset:
+    return frozenset(available_timezones()) - HOST_DEPENDENT_ZONE_KEYS
+
+
+@dataclass(frozen=True)
+class PeriodBounds:
+    start: datetime
+    end: datetime
+    cutoff: datetime
+
+
+def period_bounds(start_local: str, end_local: str, zone: str, late_hours: int) -> PeriodBounds:
+    """Resolve local midnight to UTC before adding elapsed late-arrival hours."""
+    start_day = local_date(start_local, 'period_start_local')   # shared strict parser (review F3)
+    end_day = local_date(end_local, 'period_end_local_exclusive')
+    try:
+        if type(late_hours) is not int or late_hours < 0:
+            raise ValueError('late hours must be a nonnegative integer')
+        if end_day <= start_day:
+            raise ValueError('period end must follow start')
+        if not isinstance(zone, str) or zone not in iana_zone_keys():
+            raise ValueError('timezone must be an IANA zone key')
+        tz = ZoneInfo(zone)
+        start = datetime.combine(start_day, time.min, tz).astimezone(timezone.utc)
+        end = datetime.combine(end_day, time.min, tz).astimezone(timezone.utc)
+        return PeriodBounds(start, end, end + timedelta(hours=late_hours))
+    except (ValueError, TypeError, OverflowError, ZoneInfoNotFoundError, OSError) as exc:
+        # OSError: a key naming a directory of the tzdata tree (e.g. 'America') raises
+        # IsADirectoryError rather than ZoneInfoNotFoundError on this interpreter.
+        raise InputError('invalid local period, timezone, or late cutoff') from exc
+
+
+def account_bounds(accounts: list, period: dict) -> dict[str, PeriodBounds]:
+    """Resolve every account's local period up front; any unusable entry stops the run.
+
+    This is deliberately eager: an account with a bad timezone fails the run even
+    when no event references it, instead of surfacing only if an event arrives.
+    """
+    if not isinstance(accounts, list) or not isinstance(period, dict):
+        raise InputError('accounts must be a list and period an object')
+    missing = [key for key in PERIOD_KEYS if key not in period]
+    if missing:
+        raise InputError(f'period is missing {", ".join(missing)}')
+    bounds = {}
+    for account in accounts:
+        if not isinstance(account, dict):
+            raise InputError('every account entry must be an object')
+        account_id = account.get('account_id')
+        if not isinstance(account_id, str) or not account_id:
+            raise InputError('account_id must be a nonempty string')
+        if account_id in bounds:
+            raise InputError(f'duplicate account_id {account_id!r}')
+        try:
+            bounds[account_id] = period_bounds(period['period_start_local'], period['period_end_local_exclusive'],
+                                               account.get('timezone'), period['late_cutoff_hours_after_period_end'])
+        except InputError as exc:
+            raise InputError(f'{account_id}: {exc}') from exc
+    return bounds
+
+
+def classify_time(event: ValidatedEvent, bounds: PeriodBounds) -> str:
+    """Only valid deduplication winners enter; period exclusion precedes lateness."""
+    if event.reasons or event.ts is None or event.ingested_at is None:
+        raise ValueError('time filtering requires a valid event')
+    # Compare exact instants, preserving fractions smaller than a microsecond.
+    from .validation import utc_seconds
+    ts = event.ts_exact if event.ts_exact is not None else utc_seconds(event.ts)
+    ingestion = event.ingested_at_exact if event.ingested_at_exact is not None else utc_seconds(event.ingested_at)
+    if not utc_seconds(bounds.start) <= ts < utc_seconds(bounds.end):
+        return 'excluded_out_of_period'
+    if ingestion > utc_seconds(bounds.cutoff):
+        return 'excluded_late'
+    return 'accepted'

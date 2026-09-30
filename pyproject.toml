@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rvn-ledger"
+version = "1.0.1"
+description = "Deterministic local usage billing and audit CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["tzdata>=2025.2"]
+
+[project.scripts]
+rvn-ledger = "rvn_ledger.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rvn_ledger"]
