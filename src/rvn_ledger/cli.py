@@ -65,7 +65,7 @@ def command_run(args) -> int:
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
-        print(f"OK: {manifest['counts']['invoices']} invoices; {manifest['counts']['quarantine_entries']} quarantined → {args.out}")
+        print(f"OK: {manifest['counts']['invoices']} invoices; {manifest['counts']['quarantine_entries']} quarantined -> {args.out}")
     return 0
 
 
@@ -78,7 +78,7 @@ def command_check(args) -> int:
             raise OutputError(f'{name}: unreadable or invalid JSON') from exc
     reconcile(load('invoices.json'), load('quarantine.json'), load('audit.json'), manifest)
     summary = {'out': str(args.out), 'result': 'OK', 'counts': manifest['counts']}
-    print(json.dumps(summary, indent=2) if args.json else f'OK: output hashes and audit reconciled → {args.out}')
+    print(json.dumps(summary, indent=2) if args.json else f'OK: output hashes and audit reconciled -> {args.out}')
     return 0
 
 

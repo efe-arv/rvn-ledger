@@ -7,6 +7,18 @@ from unittest.mock import patch
 from rvn_ledger.cli import main, parse_args
 
 class PackagingTests(unittest.TestCase):
+    def test_human_output_on_windows_codepage(self):
+        from test_pipeline import write_fixture
+        with tempfile.TemporaryDirectory() as d:
+            inputs = write_fixture(Path(d) / 'in')
+            raw = io.BytesIO()
+            stream = io.TextIOWrapper(raw, encoding='cp1252')
+            with contextlib.redirect_stdout(stream):
+                self.assertEqual(main(['run', '--input-dir', str(inputs), '--out', str(Path(d)/'out')]), 0)
+                self.assertEqual(main(['check', '--out', str(Path(d)/'out')]), 0)
+            stream.flush()
+            self.assertIn(b'OK:', raw.getvalue())
+
     def test_defaults(self):
         a = parse_args(['run'])
         self.assertEqual(a.input_dir, Path('data'))
