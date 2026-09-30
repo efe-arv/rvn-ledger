@@ -23,7 +23,8 @@ from .pipeline import INPUT_NAMES, run_ledger  # noqa: E402
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(prog='rvn-ledger', description='Turn a month of raw usage events into exact, reproducible invoices.')
-    parser.add_argument('--version', action='version', version='rvn-ledger 1.0.1')
+    from . import __version__
+    parser.add_argument('--version', action='version', version=f'rvn-ledger {__version__}')
     commands = parser.add_subparsers(dest='command', required=True)
     run = commands.add_parser('run', help='produce the output set from the four inputs')
     run.add_argument('--input-dir', type=Path, default=Path('data'), help='directory holding events.jsonl, accounts.json, plans.json and period.json')
@@ -32,8 +33,23 @@ def parse_args(argv):
     run.add_argument('--out', type=Path, default=Path("out"), help='output directory (created; staged replacement with rollback on caught errors)')
     check = commands.add_parser('check', help='verify a published output set: manifest hashes and audit reconciliation')
     check.add_argument('--out', type=Path, default=Path("out"))
-    run.add_argument('--json', action='store_true', help='machine-readable summary')
-    check.add_argument('--json', action='store_true', help='machine-readable summary')
+    diagnostic = commands.add_parser('explain', help='explain quarantined records or an exact event/source line')
+    diagnostic.add_argument('--out', type=Path, default=Path('out'))
+    selection = diagnostic.add_mutually_exclusive_group()
+    selection.add_argument('--event-id', help='exact event identifier; includes its duplicate copies')
+    selection.add_argument('--line', type=int, help='physical events.jsonl line number (1-based)')
+    diagnostic.add_argument('--events', type=Path, help='optional original events.jsonl; values shown only after hash match')
+    export = commands.add_parser('export', help='export a checked report or lossless input workbook to Excel')
+    export.add_argument('--format', choices=['xlsx'], default='xlsx')
+    export.add_argument('--kind', choices=['report', 'inputs'], default='report', help='report cannot be imported; inputs uses the explicit v1 transport schema')
+    export.add_argument('--out', type=Path, default=Path('out'), help='checked output set for report export')
+    export.add_argument('--input-dir', type=Path, default=Path('data'), help='four input files for --kind inputs')
+    export.add_argument('--file', type=Path, required=True, help='new XLSX file; existing files are never overwritten')
+    importer = commands.add_parser('import', help='validate an input workbook and write the four inputs to a NEW directory')
+    importer.add_argument('--file', type=Path, required=True)
+    importer.add_argument('--input-dir', type=Path, required=True, help='NEW destination directory; existing directories are never overwritten')
+    for command in (run, check, diagnostic, export, importer):
+        command.add_argument('--json', action='store_true', help='machine-readable summary')
     argv = [{' -help': '--help', '-help': '--help', '-run': 'run', '-check': 'check'}.get(a, a) for a in argv]
     return parser.parse_args(argv)
 
@@ -82,10 +98,75 @@ def command_check(args) -> int:
     return 0
 
 
+def _summary(args, summary, message):
+    print(json.dumps(summary, indent=2, ensure_ascii=True) if args.json else message)
+    return 0
+
+
+def command_explain(args):
+    from .diagnostics import explain, load_verified
+    result = explain(load_verified(args.out), event_id=args.event_id, line=args.line, events=args.events)
+    # ASCII escapes keep identifiers safe on Windows legacy codepages.
+    lines = [f"{r['source']['file']}:{r['source']['line']} event={json.dumps(r['event_id'], ensure_ascii=True)} status={r['status']}" +
+             ''.join(f"\n  {reason['code']} ({reason['field']}): {reason['message']}" +
+                     (f" value={json.dumps(reason['value'], ensure_ascii=True)}" if 'value' in reason else '') for reason in r['reasons']) +
+             (f"\n  canonical_line={r['canonical_line']}" if 'canonical_line' in r else '') for r in result['records']]
+    return _summary(args, result, '\n'.join(lines) if lines else 'OK: no quarantined records')
+
+
+def command_export(args):
+    from .excel import export_inputs, export_report
+    from .diagnostics import load_verified
+    if args.kind == 'inputs':
+        raw = {name: (args.input_dir / name).read_bytes() for name in INPUT_NAMES}
+        # Inputs intended for editing may contain bad events, but configuration must be usable.
+        result = run_ledger(raw)
+        reconcile(result.invoices, result.quarantine, result.audit, result.manifest)
+        export_inputs(raw, args.file)
+    else:
+        export_report(load_verified(args.out), args.file)
+    return _summary(args, {'file': str(args.file), 'kind': args.kind, 'result': 'OK'}, f'OK: {args.kind} workbook -> {args.file}')
+
+
+def command_import(args):
+    import os
+    import shutil
+    import tempfile
+    from .excel import import_inputs
+    raw = import_inputs(args.file)
+    result = run_ledger(raw)
+    reconcile(result.invoices, result.quarantine, result.audit, result.manifest)
+    target = args.input_dir
+    if target.exists() or target.is_symlink():
+        raise InputError('import destination exists; choose a NEW --input-dir')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix='.ledger-import-', dir=target.parent))
+    acquired = False
+    try:
+        for name, data in raw.items():
+            with open(staging / name, 'xb') as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+        target.mkdir()  # Exclusive claim: never replace another directory, even after a race.
+        acquired = True
+        for name in INPUT_NAMES:
+            os.replace(staging / name, target / name)
+    except BaseException:
+        if acquired:
+            shutil.rmtree(target)
+        raise
+    finally:
+        shutil.rmtree(staging)
+    return _summary(args, {'input_dir': str(target), 'result': 'OK', 'counts': result.manifest['counts']},
+                    f"OK: input workbook validated; {result.manifest['counts']['quarantine_entries']} quarantined events retained -> {target}")
+
+
 def main(argv=None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        return command_run(args) if args.command == 'run' else command_check(args)
+        return {'run': command_run, 'check': command_check, 'explain': command_explain,
+                'export': command_export, 'import': command_import}[args.command](args)
     except InputError as exc:
         print(f'error: {exc}', file=sys.stderr)
         return 2

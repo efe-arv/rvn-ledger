@@ -17,11 +17,11 @@ from .inputs import InputError, read_events, read_json
 from .invoice import build_invoices
 from .selection import classify_events
 
-LEDGER_VERSION = '1.0.1'
+LEDGER_VERSION = '1.1.0'
 RULES_SOURCE = 'AI Digital Engineering Take-Home: Ledger, billing rules 1-9 and the period.json output contract'
 INPUT_NAMES = ('events.jsonl', 'accounts.json', 'plans.json', 'period.json')
 CODE_MODULES = ('inputs.py', 'money.py', 'selection.py', 'validation.py', 'timing.py', 'aggregation.py', 'subscription.py',
-                'tiers.py', 'invoice.py', 'audit.py', 'outputs.py', 'pipeline.py', 'cli.py')
+                'tiers.py', 'invoice.py', 'audit.py', 'outputs.py', 'pipeline.py', 'cli.py', 'diagnostics.py', 'excel.py')
 
 
 @dataclass
