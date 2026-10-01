@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,7 +96,7 @@ def exercise(cli, directory, core_only):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--core-only', action='store_true')
-    parser.add_argument('--cli', type=Path, default=Path(sys.executable).parent / ('rvn-ledger.exe' if os.name == 'nt' else 'rvn-ledger'))
+    parser.add_argument('--cli', type=Path, default=Path(sysconfig.get_path('scripts')) / ('rvn-ledger.exe' if os.name == 'nt' else 'rvn-ledger'))
     args = parser.parse_args()
     location = Path(find_spec('rvn_ledger').origin).resolve()
     require(not location.is_relative_to(ROOT / 'src'), 'install the package non-editably before E2E')
