@@ -1,107 +1,183 @@
 {
-  "version": "1.2.0",
+  "version": "2.0.0",
   "python": "3.12.14",
   "platform": "Windows-11-10.0.26200-SP0",
   "base_events": 1000,
   "repeats": 3,
   "fixture": "synthetic unique accepted events; two accounts/currencies and two metrics",
-  "measurement": "fresh process per sample; CLI run including input I/O, publication and check; tracing enabled",
+  "measurement": "fresh process per sample; CLI run including input I/O, reconciliation, publication and check; median_seconds is untraced, peak_python_mib comes from one extra traced run",
   "memory": "peak traced Python allocations; excludes interpreter startup, native/OS memory and filesystem cache",
-  "limitations": "local timings with tracemalloc overhead; no production SLA or unmeasured 1000x claim",
+  "limitations": "one machine, host load and file cache not controlled; not a latency guarantee",
   "results": [
     {
       "scale": 1,
       "events": 1000,
-      "median_seconds": 0.268,
-      "max_peak_python_mib": 2.565,
+      "median_seconds": 0.078,
+      "per_event_ms": 0.0784,
+      "peak_python_mib": 2.628,
+      "traced_seconds": 0.25672,
+      "output_mib": 0.3,
       "samples": [
         {
-          "seconds": 0.281574,
-          "peak_python_mib": 2.565,
+          "seconds": 0.099986,
+          "peak_python_mib": null,
           "events": 1000,
-          "output_bytes": 313125,
+          "output_bytes": 314218,
           "tzdata": "tzdata package 2026.4",
-          "source_sha256": "a223472b2cfa5fd6d42449007f1b3129a08590c01791f2d7eef392dc63be4c8c"
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
         },
         {
-          "seconds": 0.247988,
-          "peak_python_mib": 2.565,
+          "seconds": 0.078446,
+          "peak_python_mib": null,
           "events": 1000,
-          "output_bytes": 313125,
+          "output_bytes": 314218,
           "tzdata": "tzdata package 2026.4",
-          "source_sha256": "a223472b2cfa5fd6d42449007f1b3129a08590c01791f2d7eef392dc63be4c8c"
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
         },
         {
-          "seconds": 0.267845,
-          "peak_python_mib": 2.565,
+          "seconds": 0.076946,
+          "peak_python_mib": null,
           "events": 1000,
-          "output_bytes": 313125,
+          "output_bytes": 314218,
           "tzdata": "tzdata package 2026.4",
-          "source_sha256": "a223472b2cfa5fd6d42449007f1b3129a08590c01791f2d7eef392dc63be4c8c"
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
+        },
+        {
+          "seconds": 0.25672,
+          "peak_python_mib": 2.628,
+          "events": 1000,
+          "output_bytes": 314218,
+          "tzdata": "tzdata package 2026.4",
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
         }
       ]
     },
     {
       "scale": 10,
       "events": 10000,
-      "median_seconds": 2.321,
-      "max_peak_python_mib": 21.656,
+      "median_seconds": 0.543,
+      "per_event_ms": 0.0543,
+      "peak_python_mib": 21.768,
+      "traced_seconds": 2.266195,
+      "output_mib": 2.9,
       "samples": [
         {
-          "seconds": 2.343126,
-          "peak_python_mib": 21.656,
+          "seconds": 0.564861,
+          "peak_python_mib": null,
           "events": 10000,
-          "output_bytes": 3071403,
+          "output_bytes": 3072496,
           "tzdata": "tzdata package 2026.4",
-          "source_sha256": "a223472b2cfa5fd6d42449007f1b3129a08590c01791f2d7eef392dc63be4c8c"
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
         },
         {
-          "seconds": 2.31971,
-          "peak_python_mib": 21.656,
+          "seconds": 0.535894,
+          "peak_python_mib": null,
           "events": 10000,
-          "output_bytes": 3071403,
+          "output_bytes": 3072496,
           "tzdata": "tzdata package 2026.4",
-          "source_sha256": "a223472b2cfa5fd6d42449007f1b3129a08590c01791f2d7eef392dc63be4c8c"
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
         },
         {
-          "seconds": 2.320645,
-          "peak_python_mib": 21.653,
+          "seconds": 0.54317,
+          "peak_python_mib": null,
           "events": 10000,
-          "output_bytes": 3071403,
+          "output_bytes": 3072496,
           "tzdata": "tzdata package 2026.4",
-          "source_sha256": "a223472b2cfa5fd6d42449007f1b3129a08590c01791f2d7eef392dc63be4c8c"
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
+        },
+        {
+          "seconds": 2.266195,
+          "peak_python_mib": 21.768,
+          "events": 10000,
+          "output_bytes": 3072496,
+          "tzdata": "tzdata package 2026.4",
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
         }
       ]
     },
     {
       "scale": 100,
       "events": 100000,
-      "median_seconds": 22.765,
-      "max_peak_python_mib": 215.61,
+      "median_seconds": 5.375,
+      "per_event_ms": 0.0538,
+      "peak_python_mib": 215.621,
+      "traced_seconds": 23.180894,
+      "output_mib": 29.4,
       "samples": [
         {
-          "seconds": 22.765389,
-          "peak_python_mib": 215.61,
+          "seconds": 5.408596,
+          "peak_python_mib": null,
           "events": 100000,
-          "output_bytes": 30833798,
+          "output_bytes": 30834891,
           "tzdata": "tzdata package 2026.4",
-          "source_sha256": "a223472b2cfa5fd6d42449007f1b3129a08590c01791f2d7eef392dc63be4c8c"
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
         },
         {
-          "seconds": 22.588168,
-          "peak_python_mib": 215.61,
+          "seconds": 5.375451,
+          "peak_python_mib": null,
           "events": 100000,
-          "output_bytes": 30833798,
+          "output_bytes": 30834891,
           "tzdata": "tzdata package 2026.4",
-          "source_sha256": "a223472b2cfa5fd6d42449007f1b3129a08590c01791f2d7eef392dc63be4c8c"
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
         },
         {
-          "seconds": 23.105361,
-          "peak_python_mib": 215.61,
+          "seconds": 5.35106,
+          "peak_python_mib": null,
           "events": 100000,
-          "output_bytes": 30833798,
+          "output_bytes": 30834891,
           "tzdata": "tzdata package 2026.4",
-          "source_sha256": "a223472b2cfa5fd6d42449007f1b3129a08590c01791f2d7eef392dc63be4c8c"
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
+        },
+        {
+          "seconds": 23.180894,
+          "peak_python_mib": 215.621,
+          "events": 100000,
+          "output_bytes": 30834891,
+          "tzdata": "tzdata package 2026.4",
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
+        }
+      ]
+    },
+    {
+      "scale": 1000,
+      "events": 1000000,
+      "median_seconds": 77.704,
+      "per_event_ms": 0.0777,
+      "peak_python_mib": 2138.574,
+      "traced_seconds": 350.243863,
+      "output_mib": 295.9,
+      "samples": [
+        {
+          "seconds": 77.510436,
+          "peak_python_mib": null,
+          "events": 1000000,
+          "output_bytes": 310258462,
+          "tzdata": "tzdata package 2026.4",
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
+        },
+        {
+          "seconds": 77.703691,
+          "peak_python_mib": null,
+          "events": 1000000,
+          "output_bytes": 310258462,
+          "tzdata": "tzdata package 2026.4",
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
+        },
+        {
+          "seconds": 77.765889,
+          "peak_python_mib": null,
+          "events": 1000000,
+          "output_bytes": 310258462,
+          "tzdata": "tzdata package 2026.4",
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
+        },
+        {
+          "seconds": 350.243863,
+          "peak_python_mib": 2138.574,
+          "events": 1000000,
+          "output_bytes": 310258462,
+          "tzdata": "tzdata package 2026.4",
+          "source_sha256": "f2146b25b5f01a2f76b29336fa06ae7d35d20add8a3978452604fc333486b38b"
         }
       ]
     }

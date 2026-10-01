@@ -1,4 +1,8 @@
-"""Measure the installed batch CLI on reproducible synthetic inputs; opt-in only."""
+"""Measure the installed batch CLI on reproducible synthetic inputs; opt-in only.
+
+Each scale is run untraced for wall time (median of --repeats fresh processes) and once more
+under tracemalloc for peak Python allocations, so tracing overhead does not inflate the timing.
+"""
 import argparse
 import contextlib
 import hashlib
@@ -43,24 +47,26 @@ def generate_inputs(directory, count):
             handle.write(json.dumps(event, separators=(',', ':')) + '\n')
 
 
-def worker(data, out):
+def worker(data, out, trace):
     """Measure read -> bill -> reconcile -> publish -> checked read in a fresh process."""
     from rvn_ledger.cli import main as ledger_main
     from rvn_ledger.pipeline import tzdata_version
     captured = io.StringIO()
-    tracemalloc.start()
+    if trace:
+        tracemalloc.start()
     started = time.perf_counter()
     with contextlib.redirect_stdout(captured):
         code = ledger_main(['run', '--input-dir', str(data), '--out', str(out), '--json'])
     seconds = time.perf_counter() - started
-    _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    peak = tracemalloc.get_traced_memory()[1] if trace else None
+    if trace:
+        tracemalloc.stop()
     if code:
         raise RuntimeError(f'billing exited with {code}')
     counts = json.loads(captured.getvalue())['counts']
     if counts['accepted'] != counts['raw']:
         raise RuntimeError('benchmark fixture did not accept every event')
-    return {'seconds': round(seconds, 6), 'peak_python_mib': round(peak / 1024**2, 3),
+    return {'seconds': round(seconds, 6), 'peak_python_mib': round(peak / 1024**2, 3) if trace else None,
             'events': counts['raw'], 'output_bytes': sum(p.stat().st_size for p in out.iterdir()),
             'tzdata': tzdata_version(), 'source_sha256': source_digest()}
 
@@ -73,24 +79,32 @@ def measure(args):
             data = root / f'inputs-{scale}'
             generate_inputs(data, args.base_events * scale)
             samples = []
-            for repeat in range(args.repeats):
+            for repeat in range(args.repeats + 1):
+                trace = repeat == args.repeats            # last run: memory only
                 command = [sys.executable, '-B', str(Path(__file__).resolve()), '--worker',
-                           '--input-dir', str(data), '--out-dir', str(root / f'out-{scale}-{repeat}')]
-                run = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=600,
+                           '--input-dir', str(data), '--out-dir', str(root / f'out-{scale}-{repeat}'), *(['--trace'] if trace else [])]
+                run = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=3600,
                                      env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONDONTWRITEBYTECODE': '1'})
                 if run.returncode:
                     raise RuntimeError(run.stderr)
                 samples.append(json.loads(run.stdout))
-                print(f'{scale}x sample {repeat + 1}/{args.repeats}: {samples[-1]["seconds"]:.3f}s', flush=True)
+                shutil.rmtree(root / f'out-{scale}-{repeat}', ignore_errors=True)
+                print(f'{scale}x {"traced" if trace else f"sample {repeat + 1}/{args.repeats}"}: {samples[-1]["seconds"]:.3f}s', flush=True)
+            timed = [s for s in samples if s['peak_python_mib'] is None]
+            traced = samples[-1]
             results.append({'scale': scale, 'events': args.base_events * scale,
-                            'median_seconds': round(statistics.median(s['seconds'] for s in samples), 3),
-                            'max_peak_python_mib': max(s['peak_python_mib'] for s in samples), 'samples': samples})
+                            'median_seconds': round(statistics.median(s['seconds'] for s in timed), 3),
+                            'per_event_ms': round(1000 * statistics.median(s['seconds'] for s in timed) / (args.base_events * scale), 4),
+                            'peak_python_mib': traced['peak_python_mib'], 'traced_seconds': traced['seconds'],
+                            'output_mib': round(traced['output_bytes'] / 1024**2, 1), 'samples': samples})
+            shutil.rmtree(data, ignore_errors=True)
     return {'version': version('rvn-ledger'), 'python': platform.python_version(), 'platform': platform.platform(),
             'base_events': args.base_events, 'repeats': args.repeats,
             'fixture': 'synthetic unique accepted events; two accounts/currencies and two metrics',
-            'measurement': 'fresh process per sample; CLI run including input I/O, publication and check; tracing enabled',
+            'measurement': 'fresh process per sample; CLI run including input I/O, reconciliation, publication and check; '
+                           'median_seconds is untraced, peak_python_mib comes from one extra traced run',
             'memory': 'peak traced Python allocations; excludes interpreter startup, native/OS memory and filesystem cache',
-            'limitations': 'local timings with tracemalloc overhead; no production SLA or unmeasured 1000x claim',
+            'limitations': 'one machine, host load and file cache not controlled; not a latency guarantee',
             'results': results}
 
 
@@ -103,9 +117,10 @@ def main():
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--input-dir', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--out-dir', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--trace', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
-        print(json.dumps(worker(args.input_dir, args.out_dir)))
+        print(json.dumps(worker(args.input_dir, args.out_dir, args.trace)))
         return
     if min([args.base_events, args.repeats, *args.scales]) < 1:
         parser.error('counts, scales and repeats must be positive')
