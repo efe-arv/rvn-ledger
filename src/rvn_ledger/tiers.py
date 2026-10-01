@@ -7,16 +7,13 @@ must start at 0, be contiguous, and end with exactly one open bracket
 (`to_units: null`). Anything else is unusable configuration (InputError), never a
 silently re-sorted or patched tariff.
 
-Each bracket that carries units is its own invoice line worth
-`round_half_up(units_in_bracket * unit_price_micros / 10000)` minor units
-(10000 micros of a major unit = 1 minor unit). A bracket with no units produces
-no line: an account with no usage gets a subscription-only invoice (rule 9).
+This module owns how units are split over brackets (rule 6); what one line
+costs is `money.usage_amount` (rule 7). A bracket with no units produces no
+line: an account with no usage gets a subscription-only invoice (rule 9).
 """
 from dataclasses import dataclass
 from .inputs import InputError
-from .money import round_half_up
-
-MICROS_PER_MINOR = 10000
+from .money import usage_amount
 
 
 @dataclass(frozen=True)
@@ -81,19 +78,30 @@ def metric_tiers(plans, plan_id: str, currency: str, metric: str) -> tuple[Tier,
     return tuple(tiers)
 
 
-def price_usage(units: int, tiers: tuple[Tier, ...], metric: str) -> list[UsageLine]:
-    """Split whole-period units over cumulative brackets; one rounded line per bracket that carries units."""
+def split_units(units: int, tiers: tuple[Tier, ...]) -> list[tuple[Tier, int]]:
+    """Rule 6: cumulative brackets over the whole period's units, each bracket [from, to)."""
     if type(units) is not int or units < 0:
         raise ValueError('units must be a nonnegative integer')
     if not tiers:
         raise ValueError('a tariff needs at least one tier')
-    lines = []
+    allocation = []
     for tier in tiers:
         if units <= tier.from_units:
             break
         upper = units if tier.to_units is None else min(units, tier.to_units)
         take = upper - tier.from_units
         if take > 0:
-            lines.append(UsageLine(metric, tier.from_units, tier.to_units, take, tier.unit_price_micros,
-                                   round_half_up(take * tier.unit_price_micros, MICROS_PER_MINOR)))
-    return lines
+            allocation.append((tier, take))
+    return allocation
+
+
+def price_usage(units: int, tiers: tuple[Tier, ...], metric: str) -> list[UsageLine]:
+    """One rounded invoice line per bracket that carries units."""
+    return [UsageLine(metric, tier.from_units, tier.to_units, take, tier.unit_price_micros,
+                      usage_amount(take, tier.unit_price_micros))
+            for tier, take in split_units(units, tiers)]
+
+
+def tiers_from_document(entries) -> tuple[Tier, ...]:
+    """Rebuild a tariff recorded in audit.json (used by reconciliation)."""
+    return tuple(Tier(e['from_units'], e['to_units'], e['unit_price_micros']) for e in entries)

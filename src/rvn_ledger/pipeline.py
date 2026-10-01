@@ -20,10 +20,8 @@ from .invoice import assemble_invoices
 from .selection import classify_prepared
 
 LEDGER_VERSION = __version__
-RULES_SOURCE = 'AI Digital Engineering Take-Home: Ledger, billing rules 1-9 and the period.json output contract'
+RULES_SOURCE = 'billing rules 1-9 and the output contract described in README.md'
 INPUT_NAMES = ('events.jsonl', 'accounts.json', 'plans.json', 'period.json')
-CODE_MODULES = ('__init__.py', 'context.py', 'inputs.py', 'money.py', 'selection.py', 'validation.py', 'timing.py', 'aggregation.py', 'subscription.py',
-                'tiers.py', 'invoice.py', 'audit.py', 'outputs.py', 'pipeline.py', 'cli.py', 'diagnostics.py', 'excel.py')
 
 
 @dataclass
@@ -50,8 +48,9 @@ def tzdata_version() -> str:
 
 
 def code_hashes() -> dict:
+    """Every module of the installed package, so the manifest names the exact code that billed."""
     here = Path(__file__).resolve().parent
-    return {name: hashlib.sha256((here / name).read_bytes()).hexdigest() for name in CODE_MODULES if (here / name).is_file()}
+    return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(here.glob('*.py'))}
 
 
 def run_ledger(raw: dict) -> LedgerRun:

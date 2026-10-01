@@ -19,10 +19,13 @@ No usage, tiers or invoice assembly happen here.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
+import re
 from .inputs import InputError, local_date
 from .money import subscription_amount
 
-CURRENCIES = ('USD', 'EUR', 'TRY')  # period.json output contract: currency USD|EUR|TRY
+# Any ISO 4217-shaped code is accepted; whether it is billable is decided by plans.json,
+# which must price every plan the account uses in that currency (rule 9: no exchange rates).
+_CURRENCY_CODE = re.compile(r'[A-Z]{3}', re.ASCII)
 
 
 @dataclass(frozen=True)
@@ -111,8 +114,8 @@ def account_subscription(account: dict, period: dict, plans: dict) -> Subscripti
     if not isinstance(account_id, str) or not account_id:
         raise InputError('account_id must be a nonempty string')
     currency = account.get('currency')
-    if not isinstance(currency, str) or currency not in CURRENCIES:
-        raise InputError(f'{account_id}: currency must be one of {", ".join(CURRENCIES)}')
+    if not isinstance(currency, str) or not _CURRENCY_CODE.fullmatch(currency):
+        raise InputError(f'{account_id}: currency must be a three-letter code such as USD')
     period_start, period_end, denominator = period_days(period)
     last_day = period_end - timedelta(days=1)
     segments, end_plan = [], None

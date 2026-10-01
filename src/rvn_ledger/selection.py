@@ -32,8 +32,17 @@ class Deduplication:
     rejected: dict[int, str]     # source line -> reason (includes unreadable canonical copies)
 
 
+def copy_precedence(ingest_seq: int, line_number: int) -> tuple:
+    """Rule 2: among copies of one event_id, the smallest key wins.
+
+    The first copy by ingest_seq wins; equal sequences (not covered by the rules)
+    fall back to physical source-line order so the choice is still deterministic.
+    """
+    return (ingest_seq, line_number)
+
+
 def deduplicate(rows: list[EventRow]) -> Deduplication:
-    canonical = {}   # event_id -> (ingest_seq, line_number)
+    canonical = {}   # event_id -> (precedence key, winning line_number)
     candidates = []  # (row, event_id, ingest_seq)
     rejected = {}
     for row in rows:
@@ -52,9 +61,9 @@ def deduplicate(rows: list[EventRow]) -> Deduplication:
                 rejected[row.line_number] = 'invalid_ingest_seq'
                 continue
         candidates.append((row, event_id, sequence))
-        key = (sequence, row.line_number)
-        if event_id not in canonical or key < canonical[event_id]:
-            canonical[event_id] = key
+        key = copy_precedence(sequence, row.line_number)
+        if event_id not in canonical or key < canonical[event_id][0]:
+            canonical[event_id] = (key, row.line_number)
     winners, duplicates = [], {}
     for row, event_id, _ in candidates:
         winner_line = canonical[event_id][1]

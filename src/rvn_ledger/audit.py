@@ -6,18 +6,29 @@ price and formula, the accepted source events per metric, the credit arithmetic
 and the attributed quarantined lines.
 
 `reconcile` is the invariant check the CLI runs before publishing and that
-`cli.py check` re-runs on published files. It recomputes every amount from the
-trail with exact rational arithmetic (not the product's money functions), ties
-every usage line to sources that sum to it, ties every source to an accepted
-decision used exactly once, and reconciles the counters. Any mismatch is an
-AuditError; a run is never published on top of one.
+`rvn-ledger check` re-runs on published files. It does two kinds of checks:
+
+- Rule-independent invariants: every raw line has exactly one decision, every
+  accepted event is the source of exactly one invoice metric, source units sum
+  to billable units, tier units sum to billable units, subtotal is the sum of
+  the lines, total = subtotal - credit applied and is never negative, credit
+  applied + remaining = credit, and every counter in the manifest matches.
+- Recomputation from the recorded pricing inputs (fee, days, tariff, credit)
+  through the SAME rule functions the invoice builder uses (`money`, `tiers`).
+  The trail must reproduce the published lines exactly.
+
+The billing rules themselves are therefore written once: changing a rule in
+`money.py` or `tiers.py` changes the invoices and this check together. Whether
+the rules are the right rules is the job of the hand-derived tests.
+Any mismatch is an AuditError; a run is never published on top of one.
 """
 from collections import Counter
 from datetime import date
-from fractions import Fraction
 from .inputs import EventRow
 from .invoice import Invoice
+from .money import apply_credit, subscription_amount, subscription_formula, usage_formula
 from .selection import Classification, TERMINAL_STATUSES
+from .tiers import price_usage, tiers_from_document
 
 
 class AuditError(RuntimeError):
@@ -52,12 +63,17 @@ def build_audit(rows: list[EventRow], classification: Classification, invoices: 
             'subscription_lines': [
                 {'plan_id': s.plan_id, 'from': s.start.isoformat(), 'to': s.end.isoformat(), 'days': s.days,
                  'days_in_period': period['days_in_period'], 'fee_minor': s.fee_minor, 'amount_minor': s.amount_minor,
-                 'formula': f'round_half_up({s.fee_minor} * {s.days} / {period["days_in_period"]}) = {s.amount_minor}'}
+                 'formula': subscription_formula(s.fee_minor, s.days, period['days_in_period'], s.amount_minor)}
                 for s in inv.subscription.segments],
+            'usage_tariffs': {
+                metric: {'plan_id': inv.subscription.period_end_plan_id,
+                         'tiers': [{'from_units': t.from_units, 'to_units': t.to_units, 'unit_price_micros': t.unit_price_micros}
+                                   for t in tiers]}
+                for metric, tiers in inv.tariffs},
             'usage_lines': [
                 {'metric': u.metric, 'plan_id': inv.subscription.period_end_plan_id, 'tier_from': u.tier_from, 'tier_to': u.tier_to,
                  'units': u.units, 'unit_price_micros': u.unit_price_micros, 'amount_minor': u.amount_minor,
-                 'formula': f'round_half_up({u.units} * {u.unit_price_micros} / 10000) = {u.amount_minor}'}
+                 'formula': usage_formula(u.units, u.unit_price_micros, u.amount_minor)}
                 for u in inv.usage_lines],
             'usage_sources': {metric: [{'event_id': s['event_id'], 'line': s['line_number'], 'units': s['units']}
                                        for s in sorted(usage[inv.account_id][metric]['sources'], key=lambda s: s['line_number'])]
@@ -66,10 +82,6 @@ def build_audit(rows: list[EventRow], classification: Classification, invoices: 
             'quarantined_lines': list(inv.quarantined_lines),
         }
     return {'decisions': decisions, 'invoices': trails}
-
-
-def _half_up(numerator: int, denominator: int) -> int:
-    return int(Fraction(numerator, denominator) + Fraction(1, 2))
 
 
 def reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manifest: dict) -> None:
@@ -148,8 +160,9 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
         for seg in trail['subscription_lines']:
             days = (date.fromisoformat(seg['to']) - date.fromisoformat(seg['from'])).days
             _require(days == seg['days'] and 0 < days <= seg['days_in_period'], f'{where}: segment days do not match its dates')
-            _require(seg['amount_minor'] == _half_up(seg['fee_minor'] * seg['days'], seg['days_in_period']), f'{where}: subscription amount does not recompute')
-            _require(seg['formula'] == f"round_half_up({seg['fee_minor']} * {seg['days']} / {seg['days_in_period']}) = {seg['amount_minor']}",
+            _require(seg['amount_minor'] == subscription_amount(seg['fee_minor'], seg['days'], seg['days_in_period']),
+                     f'{where}: subscription amount does not recompute')
+            _require(seg['formula'] == subscription_formula(seg['fee_minor'], seg['days'], seg['days_in_period'], seg['amount_minor']),
                      f'{where}: subscription formula differs from arithmetic')
             expected_lines.append({'kind': 'subscription', 'plan_id': seg['plan_id'], 'days': seg['days'], 'amount_minor': seg['amount_minor']})
         for metric, units in inv['billable_units'].items():
@@ -163,30 +176,29 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
                 used_sources[source['line']] += 1
             tier_lines = [u for u in trail['usage_lines'] if u['metric'] == metric]
             _require(sum(u['units'] for u in tier_lines) == units, f'{where}/{metric}: tier units do not sum to billable_units')
-            position = 0
+            tariff = trail['usage_tariffs'][metric]
+            recomputed = [{'metric': line.metric, 'plan_id': tariff['plan_id'], 'tier_from': line.tier_from, 'tier_to': line.tier_to,
+                           'units': line.units, 'unit_price_micros': line.unit_price_micros, 'amount_minor': line.amount_minor,
+                           'formula': usage_formula(line.units, line.unit_price_micros, line.amount_minor)}
+                          for line in price_usage(units, tiers_from_document(tariff['tiers']), metric)]
+            _require(tier_lines == recomputed, f'{where}/{metric}: usage lines do not recompute from the recorded tariff')
             for u in tier_lines:
-                _require(u['tier_from'] == position and (u['tier_to'] is None or u['tier_to'] > u['tier_from']), f'{where}/{metric}: tiers are not contiguous from 0')
-                _require(u['plan_id'] == trail['period_end_plan_id'], f'{where}/{metric}: usage priced on a plan other than the period-end plan')
-                _require(u['units'] > 0 and (u['tier_to'] is None or u['units'] <= u['tier_to'] - u['tier_from']), f'{where}/{metric}: tier units exceed the bracket')
-                expected_units = max(0, (units if u['tier_to'] is None else min(units, u['tier_to'])) - u['tier_from'])
-                _require(type(u['units']) is int and u['units'] == expected_units and expected_units > 0,
-                         f'{where}/{metric}: tier allocation is not the expected cumulative split')
-                _require(u['amount_minor'] == _half_up(u['units'] * u['unit_price_micros'], 10000), f'{where}/{metric}: usage amount does not recompute')
-                _require(u['formula'] == f"round_half_up({u['units']} * {u['unit_price_micros']} / 10000) = {u['amount_minor']}",
-                         f'{where}/{metric}: usage formula differs from arithmetic')
-                position = u['tier_to']
                 expected_lines.append({'kind': 'usage', 'metric': metric, 'tier_from': u['tier_from'], 'tier_to': u['tier_to'],
                                        'units': u['units'], 'amount_minor': u['amount_minor']})
         _require(inv['lines'] == expected_lines, f'{where}: invoice lines differ from the trail')
         subscription_lines += len(trail['subscription_lines'])
         usage_lines += len(trail['usage_lines'])
-        subtotal = sum(line['amount_minor'] for line in inv['lines'])
         credit = trail['credit']
-        applied = min(subtotal, credit['credit_minor'])
-        _require(inv['subtotal_minor'] == subtotal, f'{where}: subtotal is not the sum of the lines')
-        _require(inv['credit_applied_minor'] == applied == credit['applied_minor'], f'{where}: credit applied is not min(subtotal, credit)')
-        _require(inv['credit_remaining_minor'] == credit['credit_minor'] - applied == credit['remaining_minor'], f'{where}: credit remaining does not reconcile')
-        _require(inv['total_minor'] == subtotal - applied and inv['total_minor'] >= 0, f'{where}: total is not subtotal minus credit, or is negative')
+        subtotal, applied, remaining, total = apply_credit([line['amount_minor'] for line in inv['lines']], credit['credit_minor'])
+        # Invariants that hold whatever the credit rule is:
+        _require(inv['subtotal_minor'] == sum(line['amount_minor'] for line in inv['lines']), f'{where}: subtotal is not the sum of the lines')
+        _require(inv['total_minor'] == inv['subtotal_minor'] - inv['credit_applied_minor'] and inv['total_minor'] >= 0,
+                 f'{where}: total is not subtotal minus credit applied, or is negative')
+        _require(inv['credit_applied_minor'] + inv['credit_remaining_minor'] == credit['credit_minor'], f'{where}: credit is not conserved')
+        # The credit rule itself, recomputed by money.apply_credit:
+        _require((inv['subtotal_minor'], inv['credit_applied_minor'], inv['credit_remaining_minor'], inv['total_minor'])
+                 == (subtotal, applied, remaining, total), f'{where}: credit does not recompute')
+        _require((credit['applied_minor'], credit['remaining_minor']) == (applied, remaining), f'{where}: credit trail differs from the invoice')
         _require(inv['quarantined_count'] == len(trail['quarantined_lines']), f'{where}: quarantined_count differs from the trail')
         for line in trail['quarantined_lines']:
             _require(decision_by_line.get(line, {}).get('status') == 'quarantined', f'{where}: quarantined line {line} is not a quarantined decision')
