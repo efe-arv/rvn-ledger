@@ -157,6 +157,27 @@ give byte-identical outputs. The manifest records these prerequisites so a
 difference can be explained; changing Python versions changes the manifest even
 when the invoices, quarantine and audit bytes stay identical.
 
+## Independent verifiers (this branch)
+
+Four standalone scripts re-derive the results from the raw inputs in `./data`
+without the billing modules doing the work, then compare:
+
+| Script | Re-derives |
+|---|---|
+| `verify_timing.py` | every line's status (dedup, quarantine, local period, late cutoff) from raw bytes |
+| `verify_subscription.py` | plan segments and prorated fees by walking each local calendar day |
+| `verify_aggregation.py` | accepted units per account and metric, and their source references |
+| `verify_invoices.py` | every invoice with exact `Fraction` arithmetic, then compares the CLI's `invoices.json` whole, across clean runs (other working directory, other `TZ`, isolated interpreter) |
+
+```sh
+python verify_timing.py && python verify_subscription.py && python verify_aggregation.py && python verify_invoices.py
+```
+
+Each writes a `*.receipt.json` with the input hashes, the hashes of the code it
+checked, the interpreter and the result. The scripts deliberately duplicate the
+billing rules, so a rule change must be made in them too; that is why they live
+on this branch and not on `main`.
+
 ## Tracing a number back to its events
 
 ```sh

@@ -8,3 +8,5 @@ out/
 *.zip
 *.pdf
 .env*
+*.receipt.json
+*-verify-suite.log
