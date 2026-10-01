@@ -6,8 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rvn_ledger.inputs import MAX_INTEGER_DIGITS
-from rvn_ledger.inputs import read_json, read_events, InputError
+from rvn_ledger.inputs import InputError, MAX_INTEGER_DIGITS, read_events, read_json
 
 from fixtures import event, EXPECTED_INVOICES, PLANS, RAW_EVENTS, run_cli, write_fixture
 

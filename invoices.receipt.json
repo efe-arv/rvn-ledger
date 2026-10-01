@@ -1,0 +1,726 @@
+{
+  "artifact_hash_scope": {
+    "excluded_regenerated_outputs": [
+      "aggregation-verify-suite.log",
+      "subscription-verify-suite.log",
+      "timing-verify-suite.log"
+    ],
+    "own_regenerated_outputs": [
+      "invoices-verify-suite.log"
+    ],
+    "patterns": [
+      "*.py",
+      "src/**/*.py",
+      "tests/*.py",
+      "scripts/*.py",
+      "examples/demo/*",
+      "docs/**/*.md",
+      "docs/*.json",
+      "pyproject.toml",
+      "uv.lock",
+      "*.log",
+      "*.md"
+    ],
+    "reason": "other gates rewrite their suite logs on every run; hashing them would make this receipt stale"
+  },
+  "artifact_hashes": {
+    "CHANGELOG.md": "1ce586ee6ae664a6fe509a128553e295b3bf5d9c66fa5edc8c02e614b9dbec38",
+    "ENGINEERING.md": "3a541fbbc844a411e0a141ea642ff0bc0e5167a1847fac3a636766f7fd186fc3",
+    "MODEL_USE.md": "ba8645dd2f55ffaf552b75e3ef687ff2b5796372d95944496e90a0a694d48467",
+    "README.md": "7fbcc64c0bd72337fef6dc0e4291403259f70c9c67261c80e21364c54160e4cf",
+    "docs/benchmark-results.json": "306e503a2b6c3463cf89902776bdf34d1dec48330e69c47729aaa933aeeccc11",
+    "docs/history/2026-10-01-final-review-design.md": "42d4135153cc438e1181e5fd2bf5d14fb0dc75f141cf5e86ce1d2525cf9a4cd4",
+    "docs/history/README.md": "530ef27058d4d85a40c75ca13184e5bd02619d0ff180fde31ab862a724e29a54",
+    "examples/demo/README.md": "da3b32394462d8a841a7102a8735674c0766ea4868dd023c2a82b7a6fa6d3d45",
+    "examples/demo/accounts.json": "b1faada86a3d95824cf1b4c535d743a292568a083978ec644705597731abbb9f",
+    "examples/demo/events.jsonl": "ad72fd12f9c82912aaba1ec09d9c84a3481c41187499f4e2c2acad8a3dc2e042",
+    "examples/demo/expected-invoices.json": "cb3b98ebeb6e3121a5a02caa6014b12ee4a99b5220480595b6713883c2de3fcd",
+    "examples/demo/expected-quarantine.json": "b7b499fec1b2c223c728f0e9fb6f3fc6225d707c54845a862866c6cb8dbbe68b",
+    "examples/demo/period.json": "844f0d8cca99010d9af8d2ccdb0896c7f8af8a5a2eb12ab9632b00e43800f2d2",
+    "examples/demo/plans.json": "d3765bd311c70c4459ccf06da8f85d62bb7a51b18e4f4ec3be57f3786d09f1ef",
+    "invoices-verify-suite.log": "b991ffcc567cadb638523474a4ed45e84c8b3dec8f021845475fe9336832a984",
+    "pyproject.toml": "7013343fc450e1ca7c9439c6ce9976326dc3355af46c436a3c525e8a3351d8a2",
+    "scripts/benchmark.py": "f632dfdc3319cc5ec494daf3c6a33d2f0dbc3720a14c16711821b2014e4da1db",
+    "scripts/e2e.py": "6e6d98acd6a1e586ad58331125d2a825ebd2346413efee95a1c07abdb21cabef",
+    "src/rvn_ledger/__init__.py": "ffb3a541d6d590ae2369dd022dda48d20ad3fb31006feaa01661f9985cc35e20",
+    "src/rvn_ledger/__main__.py": "d803483d0d709c433addfd4f192ea29a1e187a06935c1956dc1758235f58f85d",
+    "src/rvn_ledger/aggregation.py": "fea80ed5ef9f05a2506cf34300cb889e954661f2356dc6a795f60660ca72dfe0",
+    "src/rvn_ledger/audit.py": "6a5bec21dcaf1f1dafd5094e7b9759879e9a43ed511ede3ccc1ceb147c16c49a",
+    "src/rvn_ledger/cli.py": "9e40123d19513e9673bd7d05d99176137c1b1635ab60206f5602c8dd59985c3e",
+    "src/rvn_ledger/context.py": "489bb679dfc8f49a408faeabeb2fa8bb8208da9b2e89f38b15011350d840bffe",
+    "src/rvn_ledger/diagnostics.py": "68bcd6cff0428d3f5eaba78e7e6d1bebd3f7b80fcbd6a7fb61d13c36bae1f5fb",
+    "src/rvn_ledger/inputs.py": "c324246c8659e5816b6b642797433768bacf4c2135d00d9e3cf8b0d22f6647de",
+    "src/rvn_ledger/invoice.py": "f4677e3f22139516ee46fa12be40c7e1d1c8373f97afa1e2c2734e1a2e372adc",
+    "src/rvn_ledger/money.py": "f7633ac66c7c66e0e31f7385a3825f4b4450b2bf9803219ac9bbfb1993a7af74",
+    "src/rvn_ledger/outputs.py": "7958a5c152417be8fda1c6ad552dec71f4ffd9f1f388aae4e21b33f675be638e",
+    "src/rvn_ledger/pipeline.py": "eb6678132d08a7f8406d07f311c00cd4751dcec4477d7a65070c8144e4994adb",
+    "src/rvn_ledger/selection.py": "94a309c477c95702440904e916ea7819539fa3fe5c653b6240e782f26ac5f72a",
+    "src/rvn_ledger/subscription.py": "7cdc47940200ae232e793f2dd92aed6e761402477318248c6cf08b03b9460b17",
+    "src/rvn_ledger/tiers.py": "eeb35927a3fa0d2c4c7028c4d07f11d9ccf748f0165509dcd14998fdd23d79a0",
+    "src/rvn_ledger/timing.py": "5314d1e3ae962097b6d9eb2cae527c1486a3a7f305e89cbad55c1dbd6c710fce",
+    "src/rvn_ledger/validation.py": "7d315229d2431c0eaf2fe597828cb3ef92976601b3af45e916384fc98c9a8470",
+    "tests/fixtures.py": "795f8ea11b29dcce8904d5dec50f05dbade00b3a165c5a9de32909aff5997722",
+    "tests/test_aggregation.py": "c5e1add3e691ddb6fa3a92b77ae569e475a66fd9312db8fc2a87378769a371ed",
+    "tests/test_audit.py": "9667aee8b1fb9930b4d34a67468d6e3c45cdee8e1d588e587eb6fcd38517263a",
+    "tests/test_cli.py": "c402863c7d08bda7ff8a627d0c7a52d72a327026b3d17feed7111d5aba9c6e4b",
+    "tests/test_context.py": "229f62dba718ab26e292cf0412eecbd5fa99f9e26426943c91435d44de656f33",
+    "tests/test_hazards.py": "3f02476cb33091d1d032156d0bdcfa0d4324fdc1a4cdddd592d723ac0fff522e",
+    "tests/test_inputs.py": "7aac1cf4fbfee70c28da6f9313eed1101665c184cb69cb2bc6e27842b02927e2",
+    "tests/test_invariants.py": "315d85352febb6cd69e1e330353ec0901638b9256529d4847d63af1fe6046ee3",
+    "tests/test_invoice.py": "ab001b21bdda1521bb2b8bc970a691308831d4232f4cc89ac9917078bebcac39",
+    "tests/test_money.py": "751433a0b5617f65b0b24b8230db66698693af299890c6eb2f3b0e1161334d6b",
+    "tests/test_outputs.py": "129212113291ee827dad4ca8349bd97774d98c23a7fc433899e32e756ed62495",
+    "tests/test_pipeline.py": "54484e316cb2a6253eb13842a6e28261af400273e82aa4042604a4bcaf013650",
+    "tests/test_selection.py": "1cce153dc6f55f86e297b7bad2f492e2906a66ebeed1b6f2e3d9c59cb85e5909",
+    "tests/test_subscription.py": "a63470bcd541b0e3f30bae3cc963ff53160074285c8d580f9e170b7ffbdd405e",
+    "tests/test_tiers.py": "c0de55de468ec253fba10e411b50b15e9f50df9a29a30ba972255e1d155c62d8",
+    "tests/test_timing.py": "1fba3a9d3853af368627cf3d3bd69aae2673e92bfe9c7c804d2782b69f6a7e71",
+    "tests/test_validation.py": "1ff9b0d94dfb2d4a950d3452a5a72c7a5298b812b03fe3836cde8cdb916f59a6",
+    "tests/test_verify_scripts.py": "0024fe58736db695b673753afc9d9253a9c6b6d07f7f704f335e1e8c6e5cc7a0",
+    "uv.lock": "02640f8421c0ea0435cfaaf7ee5e9a978926922017fb09af39bd26dfd7722459",
+    "verify_aggregation.py": "a7aabeb98f2ff2c0da1b28ba0c82de8b2e280afa522ef8cd4d8efd47105a639e",
+    "verify_invoices.py": "5d976a3a9dd5afe21fed2a97be8e963f92d6fde2156f681d1772445f04fa398e",
+    "verify_subscription.py": "f33b0f260f7032e7bf4331a5791246ef928619305149be76a7fa6f96aae3cd93",
+    "verify_support.py": "4946221769af0a1d8590fa9dfeed725afb63b4ffa9ca1dd27088ed80b8064151",
+    "verify_timing.py": "d3f1f2cf6290e6edd1d477d0bae69d23df6c3090afc29a9a639679f171dfdd5e"
+  },
+  "clean_runs": [
+    {
+      "command": "C:\\Users\\efebu\\rvn-ledger-work\\.venv\\Scripts\\python.exe -m rvn_ledger run --input-dir C:\\Users\\efebu\\rvn-ledger-work\\data --out C:\\Users\\efebu\\AppData\\Local\\Temp\\tmpncc3cj0w\\a",
+      "cwd": "C:\\Users\\efebu\\rvn-ledger-work",
+      "exit_code": 0,
+      "sha256": {
+        "audit.json": "c22fb1e25069f4a30877e00677f3ce310e5ed861a63e8e922fcc2e8aaaef613f",
+        "invoices.json": "d80e2744f272f28b2627ebc38835af3eb8cf545257ae8f2b5b5af1549aabd6d7",
+        "manifest.json": "78604f9908b8295bfea4426b4ed06f1f769250c93dcd33fb8f89853d1f3b7605",
+        "quarantine.json": "f5d19e8c7803a9473aff60990852552296b19ec5e79b9c63c1cc14410957fa3c"
+      },
+      "tz": "inherited"
+    },
+    {
+      "command": "C:\\Users\\efebu\\rvn-ledger-work\\.venv\\Scripts\\python.exe -m rvn_ledger run --input-dir C:\\Users\\efebu\\rvn-ledger-work\\data --out C:\\Users\\efebu\\AppData\\Local\\Temp\\tmpncc3cj0w\\b",
+      "cwd": "C:\\Users\\efebu\\AppData\\Local\\Temp\\tmpncc3cj0w",
+      "exit_code": 0,
+      "sha256": {
+        "audit.json": "c22fb1e25069f4a30877e00677f3ce310e5ed861a63e8e922fcc2e8aaaef613f",
+        "invoices.json": "d80e2744f272f28b2627ebc38835af3eb8cf545257ae8f2b5b5af1549aabd6d7",
+        "manifest.json": "78604f9908b8295bfea4426b4ed06f1f769250c93dcd33fb8f89853d1f3b7605",
+        "quarantine.json": "f5d19e8c7803a9473aff60990852552296b19ec5e79b9c63c1cc14410957fa3c"
+      },
+      "tz": "Pacific/Honolulu"
+    },
+    {
+      "command": "C:\\Users\\efebu\\rvn-ledger-work\\.venv\\Scripts\\python.exe -I -m rvn_ledger run --input-dir C:\\Users\\efebu\\rvn-ledger-work\\data --out C:\\Users\\efebu\\AppData\\Local\\Temp\\tmpncc3cj0w\\c",
+      "cwd": "C:\\Users\\efebu\\AppData\\Local\\Temp\\tmpncc3cj0w\\a",
+      "exit_code": 0,
+      "sha256": {
+        "audit.json": "c22fb1e25069f4a30877e00677f3ce310e5ed861a63e8e922fcc2e8aaaef613f",
+        "invoices.json": "d80e2744f272f28b2627ebc38835af3eb8cf545257ae8f2b5b5af1549aabd6d7",
+        "manifest.json": "78604f9908b8295bfea4426b4ed06f1f769250c93dcd33fb8f89853d1f3b7605",
+        "quarantine.json": "f5d19e8c7803a9473aff60990852552296b19ec5e79b9c63c1cc14410957fa3c"
+      },
+      "tz": "Asia/Tokyo"
+    }
+  ],
+  "counts": {
+    "accepted": 1042,
+    "duplicate_ignored": 6,
+    "excluded_late": 3,
+    "excluded_out_of_period": 8,
+    "invoices": 41,
+    "quarantine_entries": 19,
+    "quarantined": 19,
+    "raw": 1078,
+    "subscription_lines": 45,
+    "usage_lines": 97
+  },
+  "gate": "end_to_end_invoices_outputs_and_determinism",
+  "historical_red": {
+    "exit_code": "unknown",
+    "log": "ledger-modules-red.log",
+    "present": false
+  },
+  "independent_check": {
+    "clean_runs_compared": 3,
+    "invoices_checked": 41,
+    "method": "statuses from verify_timing.independent_statuses (raw bytes, no product modules); accepted payloads re-read with the plain json module; segment days by walking every local period date against raw plan_segments; period-end plan = raw segment containing the final local date; tiers split by a private bracket walk; every amount Fraction half-up; credit min(subtotal, credit_minor); quarantined_count from quarantined statuses with a known account_id; whole contract documents compared for equality; quarantine event_ids and primary reasons re-derived with the documented precedence; manifest counts and hashes compared; then audit.reconcile on the published files",
+    "quarantine_entries_checked": 19
+  },
+  "input_hashes": {
+    "accounts.json": "81997273a9014e5e1a9dd238b178996cb61740d828c8cb370e50f6f289298e4d",
+    "events.jsonl": "f42a4f0712cbf5c096849a9790b233609a1775aaec1810c952dfa095ed637d82",
+    "period.json": "24c3a0638052b7d296e68625e8674d4d2a12b65a57094bbd1dfb8f7738bc4522",
+    "plans.json": "9922b3739ba8104931b22b3da242ba55540b1bdee7ad7f4cb3e06fe51cd4e50f"
+  },
+  "limitations": [
+    "No externally supplied reference invoices are used; equality is against an independent recomputation of the same rules",
+    "Reasons for unreadable lines (no payload) are checked for presence only; the supplied data has none",
+    "The no-network run depends on unshare being permitted on the host; its presence is recorded per run"
+  ],
+  "output_hashes": {
+    "audit.json": "c22fb1e25069f4a30877e00677f3ce310e5ed861a63e8e922fcc2e8aaaef613f",
+    "invoices.json": "d80e2744f272f28b2627ebc38835af3eb8cf545257ae8f2b5b5af1549aabd6d7",
+    "manifest.json": "78604f9908b8295bfea4426b4ed06f1f769250c93dcd33fb8f89853d1f3b7605",
+    "quarantine.json": "f5d19e8c7803a9473aff60990852552296b19ec5e79b9c63c1cc14410957fa3c"
+  },
+  "per_account": {
+    "acct_001": {
+      "billable_units": {
+        "api_calls": 104357,
+        "storage_gb_hours": 1432
+      },
+      "credit_applied_minor": 500,
+      "currency": "TRY",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 767492,
+      "total_minor": 766992
+    },
+    "acct_002": {
+      "billable_units": {
+        "api_calls": 100165,
+        "storage_gb_hours": 1471
+      },
+      "credit_applied_minor": 0,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 20046,
+      "total_minor": 20046
+    },
+    "acct_003": {
+      "billable_units": {
+        "api_calls": 157630,
+        "storage_gb_hours": 2146
+      },
+      "credit_applied_minor": 0,
+      "currency": "TRY",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 1095456,
+      "total_minor": 1095456
+    },
+    "acct_004": {
+      "billable_units": {
+        "api_calls": 63791,
+        "storage_gb_hours": 1032
+      },
+      "credit_applied_minor": 0,
+      "currency": "TRY",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 1263713,
+      "total_minor": 1263713
+    },
+    "acct_005": {
+      "billable_units": {
+        "api_calls": 128157,
+        "storage_gb_hours": 1808
+      },
+      "credit_applied_minor": 0,
+      "currency": "USD",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 30541,
+      "total_minor": 30541
+    },
+    "acct_006": {
+      "billable_units": {
+        "api_calls": 28453,
+        "storage_gb_hours": 2015
+      },
+      "credit_applied_minor": 5000,
+      "currency": "TRY",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 1120990,
+      "total_minor": 1115990
+    },
+    "acct_007": {
+      "billable_units": {
+        "api_calls": 82713,
+        "storage_gb_hours": 918
+      },
+      "credit_applied_minor": 1500,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 21995,
+      "total_minor": 20495
+    },
+    "acct_008": {
+      "billable_units": {
+        "api_calls": 108834,
+        "storage_gb_hours": 1814
+      },
+      "credit_applied_minor": 0,
+      "currency": "USD",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 27837,
+      "total_minor": 27837
+    },
+    "acct_009": {
+      "billable_units": {
+        "api_calls": 65021,
+        "storage_gb_hours": 1700
+      },
+      "credit_applied_minor": 0,
+      "currency": "USD",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 37814,
+      "total_minor": 37814
+    },
+    "acct_010": {
+      "billable_units": {
+        "api_calls": 96386,
+        "storage_gb_hours": 468
+      },
+      "credit_applied_minor": 5000,
+      "currency": "USD",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 21008,
+      "total_minor": 16008
+    },
+    "acct_011": {
+      "billable_units": {
+        "api_calls": 125793,
+        "storage_gb_hours": 686
+      },
+      "credit_applied_minor": 1500,
+      "currency": "TRY",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 1021313,
+      "total_minor": 1019813
+    },
+    "acct_012": {
+      "billable_units": {
+        "api_calls": 115390,
+        "storage_gb_hours": 1601
+      },
+      "credit_applied_minor": 0,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 26311,
+      "total_minor": 26311
+    },
+    "acct_013": {
+      "billable_units": {
+        "api_calls": 116554,
+        "storage_gb_hours": 2603
+      },
+      "credit_applied_minor": 1500,
+      "currency": "TRY",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 846812,
+      "total_minor": 845312
+    },
+    "acct_014": {
+      "billable_units": {
+        "api_calls": 111563,
+        "storage_gb_hours": 816
+      },
+      "credit_applied_minor": 0,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 25735,
+      "total_minor": 25735
+    },
+    "acct_015": {
+      "billable_units": {
+        "api_calls": 150576,
+        "storage_gb_hours": 1467
+      },
+      "credit_applied_minor": 5000,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 30872,
+      "total_minor": 25872
+    },
+    "acct_016": {
+      "billable_units": {
+        "api_calls": 106250,
+        "storage_gb_hours": 2103
+      },
+      "credit_applied_minor": 500,
+      "currency": "TRY",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 932891,
+      "total_minor": 932391
+    },
+    "acct_017": {
+      "billable_units": {
+        "api_calls": 89761,
+        "storage_gb_hours": 735
+      },
+      "credit_applied_minor": 0,
+      "currency": "TRY",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 675529,
+      "total_minor": 675529
+    },
+    "acct_018": {
+      "billable_units": {
+        "api_calls": 65402,
+        "storage_gb_hours": 1647
+      },
+      "credit_applied_minor": 1500,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 14330,
+      "total_minor": 12830
+    },
+    "acct_019": {
+      "billable_units": {
+        "api_calls": 36975,
+        "storage_gb_hours": 1176
+      },
+      "credit_applied_minor": 0,
+      "currency": "EUR",
+      "lines": 3,
+      "quarantined_count": 3,
+      "subtotal_minor": 32038,
+      "total_minor": 32038
+    },
+    "acct_020": {
+      "billable_units": {
+        "api_calls": 57774,
+        "storage_gb_hours": 1387
+      },
+      "credit_applied_minor": 0,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 3,
+      "subtotal_minor": 18800,
+      "total_minor": 18800
+    },
+    "acct_021": {
+      "billable_units": {
+        "api_calls": 87316,
+        "storage_gb_hours": 2022
+      },
+      "credit_applied_minor": 0,
+      "currency": "USD",
+      "lines": 3,
+      "quarantined_count": 3,
+      "subtotal_minor": 40509,
+      "total_minor": 40509
+    },
+    "acct_022": {
+      "billable_units": {
+        "api_calls": 69223,
+        "storage_gb_hours": 708
+      },
+      "credit_applied_minor": 0,
+      "currency": "TRY",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 1285272,
+      "total_minor": 1285272
+    },
+    "acct_023": {
+      "billable_units": {
+        "api_calls": 90844,
+        "storage_gb_hours": 930
+      },
+      "credit_applied_minor": 1500,
+      "currency": "USD",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 40861,
+      "total_minor": 39361
+    },
+    "acct_024": {
+      "billable_units": {
+        "api_calls": 95572,
+        "storage_gb_hours": 431
+      },
+      "credit_applied_minor": 5000,
+      "currency": "TRY",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 1392693,
+      "total_minor": 1387693
+    },
+    "acct_025": {
+      "billable_units": {
+        "api_calls": 24329,
+        "storage_gb_hours": 1110
+      },
+      "credit_applied_minor": 0,
+      "currency": "USD",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 32891,
+      "total_minor": 32891
+    },
+    "acct_026": {
+      "billable_units": {
+        "api_calls": 130587,
+        "storage_gb_hours": 632
+      },
+      "credit_applied_minor": 0,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 28863,
+      "total_minor": 28863
+    },
+    "acct_027": {
+      "billable_units": {
+        "api_calls": 108001,
+        "storage_gb_hours": 992
+      },
+      "credit_applied_minor": 1500,
+      "currency": "EUR",
+      "lines": 5,
+      "quarantined_count": 0,
+      "subtotal_minor": 39764,
+      "total_minor": 38264
+    },
+    "acct_028": {
+      "billable_units": {
+        "api_calls": 55214,
+        "storage_gb_hours": 2514
+      },
+      "credit_applied_minor": 0,
+      "currency": "EUR",
+      "lines": 5,
+      "quarantined_count": 0,
+      "subtotal_minor": 15272,
+      "total_minor": 15272
+    },
+    "acct_029": {
+      "billable_units": {
+        "api_calls": 65077,
+        "storage_gb_hours": 1799
+      },
+      "credit_applied_minor": 0,
+      "currency": "TRY",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 913341,
+      "total_minor": 913341
+    },
+    "acct_030": {
+      "billable_units": {
+        "api_calls": 10000,
+        "storage_gb_hours": 115
+      },
+      "credit_applied_minor": 0,
+      "currency": "TRY",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 186383,
+      "total_minor": 186383
+    },
+    "acct_031": {
+      "billable_units": {
+        "api_calls": 250000,
+        "storage_gb_hours": 375
+      },
+      "credit_applied_minor": 0,
+      "currency": "USD",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 59924,
+      "total_minor": 59924
+    },
+    "acct_032": {
+      "billable_units": {
+        "api_calls": 50000,
+        "storage_gb_hours": 399
+      },
+      "credit_applied_minor": 0,
+      "currency": "USD",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 19444,
+      "total_minor": 19444
+    },
+    "acct_033": {
+      "billable_units": {
+        "api_calls": 106492,
+        "storage_gb_hours": 1976
+      },
+      "credit_applied_minor": 1440864,
+      "currency": "TRY",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 1440864,
+      "total_minor": 0
+    },
+    "acct_034": {
+      "billable_units": {
+        "api_calls": 137545,
+        "storage_gb_hours": 2232
+      },
+      "credit_applied_minor": 1568745,
+      "currency": "TRY",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 1568745,
+      "total_minor": 0
+    },
+    "acct_035": {
+      "billable_units": {
+        "api_calls": 0,
+        "storage_gb_hours": 0
+      },
+      "credit_applied_minor": 5000,
+      "currency": "TRY",
+      "lines": 1,
+      "quarantined_count": 0,
+      "subtotal_minor": 99900,
+      "total_minor": 94900
+    },
+    "acct_036": {
+      "billable_units": {
+        "api_calls": 0,
+        "storage_gb_hours": 0
+      },
+      "credit_applied_minor": 0,
+      "currency": "USD",
+      "lines": 1,
+      "quarantined_count": 0,
+      "subtotal_minor": 9900,
+      "total_minor": 9900
+    },
+    "acct_037": {
+      "billable_units": {
+        "api_calls": 0,
+        "storage_gb_hours": 0
+      },
+      "credit_applied_minor": 0,
+      "currency": "USD",
+      "lines": 1,
+      "quarantined_count": 0,
+      "subtotal_minor": 9900,
+      "total_minor": 9900
+    },
+    "acct_038": {
+      "billable_units": {
+        "api_calls": 118086,
+        "storage_gb_hours": 775
+      },
+      "credit_applied_minor": 0,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 0,
+      "subtotal_minor": 26579,
+      "total_minor": 26579
+    },
+    "acct_039": {
+      "billable_units": {
+        "api_calls": 85605,
+        "storage_gb_hours": 1034
+      },
+      "credit_applied_minor": 1500,
+      "currency": "USD",
+      "lines": 3,
+      "quarantined_count": 0,
+      "subtotal_minor": 40240,
+      "total_minor": 38740
+    },
+    "acct_040": {
+      "billable_units": {
+        "api_calls": 56234,
+        "storage_gb_hours": 2220
+      },
+      "credit_applied_minor": 0,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 2,
+      "subtotal_minor": 18682,
+      "total_minor": 18682
+    },
+    "acct_041": {
+      "billable_units": {
+        "api_calls": 100958,
+        "storage_gb_hours": 978
+      },
+      "credit_applied_minor": 500,
+      "currency": "EUR",
+      "lines": 4,
+      "quarantined_count": 2,
+      "subtotal_minor": 24373,
+      "total_minor": 23873
+    }
+  },
+  "python": {
+    "executable": "C:\\Users\\efebu\\rvn-ledger-work\\.venv\\Scripts\\python.exe",
+    "implementation": "CPython",
+    "version": "3.12.14"
+  },
+  "quarantine_reasons": {
+    "invalid_ts": 3,
+    "invalid_units": 3,
+    "nonpositive_units": 4,
+    "unknown_account": 6,
+    "unknown_metric": 3
+  },
+  "revision": "uncommitted",
+  "source_archive_sha256": "785735327e9e1afb179f1a4580d1978f07442ab279cfef27ff09f006c89cbc9d",
+  "source_provenance": {
+    "archive_sha256": "785735327e9e1afb179f1a4580d1978f07442ab279cfef27ff09f006c89cbc9d",
+    "archive_status": "original attachment.zip unavailable; archive hash is historical, not reverified; data/ files are checked against their previously recorded per-file hashes",
+    "input_sha256": {
+      "accounts.json": "81997273a9014e5e1a9dd238b178996cb61740d828c8cb370e50f6f289298e4d",
+      "events.jsonl": "f42a4f0712cbf5c096849a9790b233609a1775aaec1810c952dfa095ed637d82",
+      "period.json": "24c3a0638052b7d296e68625e8674d4d2a12b65a57094bbd1dfb8f7738bc4522",
+      "plans.json": "9922b3739ba8104931b22b3da242ba55540b1bdee7ad7f4cb3e06fe51cd4e50f"
+    }
+  },
+  "suite_log": "invoices-verify-suite.log",
+  "suite_runs": {
+    "Pacific/Honolulu": {
+      "command": "C:\\Users\\efebu\\rvn-ledger-work\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v",
+      "exit_code": 0,
+      "summary": "OK",
+      "tests_ran": 194,
+      "tz": "Pacific/Honolulu"
+    },
+    "UTC": {
+      "command": "C:\\Users\\efebu\\rvn-ledger-work\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v",
+      "exit_code": 0,
+      "summary": "OK",
+      "tests_ran": 194,
+      "tz": "UTC"
+    }
+  },
+  "tests": 194,
+  "timestamp": "2026-10-01T21:21:21.831700+00:00",
+  "totals_by_currency": {
+    "EUR": {
+      "credit_applied_minor": 10000,
+      "credit_remaining_minor": 0,
+      "invoices": 14,
+      "subtotal_minor": 343660,
+      "total_minor": 333660
+    },
+    "TRY": {
+      "credit_applied_minor": 3028609,
+      "credit_remaining_minor": 16990389,
+      "invoices": 15,
+      "subtotal_minor": 14611394,
+      "total_minor": 11582785
+    },
+    "USD": {
+      "credit_applied_minor": 8000,
+      "credit_remaining_minor": 0,
+      "invoices": 12,
+      "subtotal_minor": 370869,
+      "total_minor": 362869
+    }
+  }
+}
