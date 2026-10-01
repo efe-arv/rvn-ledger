@@ -1,7 +1,10 @@
-"""Validate canonical events; timestamps retain arbitrary fractional seconds.
+"""Validate canonical events; timestamps keep exact fractional seconds.
 
 Timestamp policy: extended ISO date/time with seconds, Z or an explicit HH:MM
-UTC offset. Naive times, leap seconds and fractional offsets are refused.
+UTC offset. Naive times, leap seconds and fractional offsets are refused. A
+fraction may have up to MAX_INTEGER_DIGITS (256) digits. That is below the
+smallest int-string limit Python allows (640), so whether a timestamp parses
+never depends on PYTHONINTMAXSTRDIGITS or sys.set_int_max_str_digits.
 Boundary decisions use exact rational seconds, never datetime's truncated fraction.
 Reason precedence: account, metric, units, usage timestamp, ingestion timestamp.
 """
@@ -9,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from fractions import Fraction
 import re
-from .inputs import EventRow
+from .inputs import EventRow, MAX_INTEGER_DIGITS
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,8 @@ def _timestamp_parts(value):
     if match is None:
         return None, None
     base, digits, offset = match.groups()
+    if digits is not None and len(digits) > MAX_INTEGER_DIGITS:
+        return None, None
     try:
         if offset != 'Z' and (int(offset[1:3]) >= 24 or int(offset[4:6]) >= 60):
             return None, None

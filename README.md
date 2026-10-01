@@ -22,12 +22,15 @@ package (installed automatically) are the only requirements.
 ```sh
 git clone https://github.com/efe-arv/rvn-ledger.git
 cd rvn-ledger
-python -m pip install .          # or: uv sync
+python -m pip install .
 
 rvn-ledger run --input-dir examples/demo --out out/demo
 rvn-ledger check --out out/demo
 rvn-ledger explain --out out/demo --events examples/demo/events.jsonl
 ```
+
+With uv, run `uv sync` instead of the install and prefix each command with
+`uv run`, for example `uv run rvn-ledger check --out out/demo`.
 
 Expected: `OK: 2 invoices; 3 quarantined -> out/demo`. The demo is a small
 synthetic month whose invoices were worked out by hand in
@@ -174,7 +177,8 @@ lists the accepted events (id, source line, units) that sum to it, and
   hazard, small enough to verify by hand. Start here.
 - **`tests/test_invariants.py`** — seeded generated inputs (duplicates, junk,
   late and out-of-period events) checked against the invariants above, plus
-  duplicate, ordering and cross-account independence.
+  independence from later duplicates, from line order (given distinct
+  `ingest_seq` values) and from other accounts (given distinct `event_id`s).
 - **`tests/fixtures.py`** — one hand-derived input set covering every hazard,
   with its expected invoices and quarantine.
 - **`scripts/e2e.py`** — drives the installed command on the demo from outside

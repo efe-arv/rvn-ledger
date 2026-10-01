@@ -75,3 +75,31 @@ class ValidationTests(unittest.TestCase):
         result = self.validate(self.event(units=10**50))
         self.assertEqual(result.reasons, ())
         self.assertEqual(result.row.value['units'], 10**50)
+
+    def test_fraction_limit_does_not_depend_on_python_int_settings(self):
+        # External review (2026-10-02): a 700-digit fraction parsed under the default
+        # int-string limit (4300) but was invalid_ts under PYTHONINTMAXSTRDIGITS=640, so
+        # one input could bill differently on two hosts. Fractions are now capped at
+        # MAX_INTEGER_DIGITS, below the smallest limit Python accepts.
+        import os
+        import subprocess
+        import sys
+        from fractions import Fraction
+        from rvn_ledger.inputs import MAX_INTEGER_DIGITS
+        from rvn_ledger.validation import utc_seconds
+        lengths = (MAX_INTEGER_DIGITS, MAX_INTEGER_DIGITS + 1, 700)
+        stamps = ['2026-09-01T00:00:00.' + '0' * (n - 1) + '1Z' for n in lengths]
+        longest_valid = self.validate(self.event(ts=stamps[0]))
+        self.assertEqual(longest_valid.reasons, ())
+        start = utc_seconds(datetime(2026, 9, 1, tzinfo=timezone.utc))
+        self.assertEqual(longest_valid.ts_exact - start, Fraction(1, 10 ** MAX_INTEGER_DIGITS))
+        for stamp in stamps[1:]:
+            self.assertEqual(self.validate(self.event(ts=stamp)).reasons, ('invalid_ts',))
+        script = ('import sys; from rvn_ledger.validation import _timestamp_parts; '
+                  'print([_timestamp_parts(s)[0] is not None for s in sys.argv[1:]])')
+        for limit in ('640', '0'):   # the smallest limit Python allows, and no limit
+            with self.subTest(PYTHONINTMAXSTRDIGITS=limit):
+                result = subprocess.run([sys.executable, '-c', script, *stamps], capture_output=True,
+                                        text=True, env={**os.environ, 'PYTHONINTMAXSTRDIGITS': limit})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), '[True, False, False]')

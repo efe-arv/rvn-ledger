@@ -11,7 +11,12 @@
 - Currencies are no longer a hard-coded list: any three-letter code is accepted if `plans.json` prices it.
 - Tests reorganised: `tests/test_hazards.py` (one test per rule), `tests/test_invariants.py`, shared fixtures in
   `tests/fixtures.py`; review-round test files folded into the module they test.
-- Invoices and quarantine output for the same inputs are byte-identical to 1.2.0.
+- Timestamp fractions are capped at 256 digits (a longer one is `invalid_ts`), so whether a timestamp
+  parses no longer depends on Python's int-string limit (`PYTHONINTMAXSTRDIGITS`).
+- Stale verifier receipts and logs removed from the repository root; the scripts that write them live on
+  `feature/independent-verifiers`.
+- Apart from the timestamp-fraction limit, invoices and quarantine output for the same inputs are
+  byte-identical to 1.2.0.
 
 ## 1.2.0 — 2026-10-01
 
