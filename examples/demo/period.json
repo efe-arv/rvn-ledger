@@ -1,0 +1,7 @@
+{
+  "period_start_local":"2026-09-01",
+  "period_end_local_exclusive":"2026-10-01",
+  "days_in_period":30,
+  "late_cutoff_hours_after_period_end":48,
+  "metrics":["api_calls","storage_gb_hours"]
+}

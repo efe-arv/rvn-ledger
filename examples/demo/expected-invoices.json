@@ -1,0 +1,20 @@
+[
+  {
+    "account_id":"demo-try","currency":"TRY","timezone":"Europe/Istanbul",
+    "billable_units":{"api_calls":12,"storage_gb_hours":5},
+    "lines":[
+      {"kind":"subscription","plan_id":"basic","days":15,"amount_minor":45},
+      {"kind":"subscription","plan_id":"pro","days":15,"amount_minor":60},
+      {"kind":"usage","metric":"api_calls","tier_from":0,"tier_to":10,"units":10,"amount_minor":5},
+      {"kind":"usage","metric":"api_calls","tier_from":10,"tier_to":null,"units":2,"amount_minor":3},
+      {"kind":"usage","metric":"storage_gb_hours","tier_from":0,"tier_to":null,"units":5,"amount_minor":1}
+    ],
+    "subtotal_minor":114,"credit_applied_minor":5,"credit_remaining_minor":0,"total_minor":109,"quarantined_count":1
+  },
+  {
+    "account_id":"demo-usd","currency":"USD","timezone":"UTC",
+    "billable_units":{"api_calls":0,"storage_gb_hours":0},
+    "lines":[{"kind":"subscription","plan_id":"basic","days":30,"amount_minor":30}],
+    "subtotal_minor":30,"credit_applied_minor":30,"credit_remaining_minor":969,"total_minor":0,"quarantined_count":0
+  }
+]

@@ -128,17 +128,27 @@ def command_explain(args):
     return _summary(args, result, '\n'.join(lines) if lines else 'OK: no quarantined records')
 
 
+def _excel_support():
+    try:
+        from . import excel
+    except ModuleNotFoundError as exc:
+        if exc.name.split('.')[0] not in ('openpyxl', 'defusedxml', 'et_xmlfile'):
+            raise
+        raise InputError('Excel support is optional; install rvn-ledger[excel] using the Excel setup in README.md') from exc
+    return excel
+
+
 def command_export(args):
-    from .excel import export_inputs, export_report
+    excel = _excel_support()
     from .diagnostics import load_verified
     if args.kind == 'inputs':
         raw = {name: (args.input_dir / name).read_bytes() for name in INPUT_NAMES}
         # Inputs intended for editing may contain bad events, but configuration must be usable.
         result = run_ledger(raw)
         reconcile(result.invoices, result.quarantine, result.audit, result.manifest)
-        export_inputs(raw, args.file)
+        excel.export_inputs(raw, args.file)
     else:
-        export_report(load_verified(args.out), args.file)
+        excel.export_report(load_verified(args.out), args.file)
     return _summary(args, {'file': str(args.file), 'kind': args.kind, 'result': 'OK'}, f'OK: {args.kind} workbook -> {args.file}')
 
 
@@ -146,8 +156,7 @@ def command_import(args):
     import os
     import shutil
     import tempfile
-    from .excel import import_inputs
-    raw = import_inputs(args.file)
+    raw = _excel_support().import_inputs(args.file)
     result = run_ledger(raw)
     reconcile(result.invoices, result.quarantine, result.audit, result.manifest)
     target = args.input_dir

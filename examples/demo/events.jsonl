@@ -1,0 +1,9 @@
+{"event_id":"api-first","ingest_seq":2,"account_id":"demo-try","metric":"api_calls","units":7,"ts":"2026-09-15T12:00:00Z","ingested_at":"2026-09-15T12:01:00Z"}
+{"event_id":"api-first","ingest_seq":9,"account_id":"demo-usd","metric":"api_calls","units":999,"ts":"2026-09-15T12:00:00Z","ingested_at":"2026-09-15T12:01:00Z"}
+{"event_id":"api-second","ingest_seq":1,"account_id":"demo-try","metric":"api_calls","units":5,"ts":"2026-09-20T12:00:00Z","ingested_at":"2026-09-20T12:01:00Z"}
+{"event_id":"storage-cutoff","ingest_seq":3,"account_id":"demo-try","metric":"storage_gb_hours","units":5,"ts":"2026-09-30T20:59:59Z","ingested_at":"2026-10-02T21:00:00Z"}
+{"event_id":"early","ingest_seq":4,"account_id":"demo-try","metric":"api_calls","units":1,"ts":"2026-08-31T20:59:59Z","ingested_at":"2026-09-01T12:00:00Z"}
+{"event_id":"late","ingest_seq":5,"account_id":"demo-try","metric":"api_calls","units":1,"ts":"2026-09-20T12:00:00Z","ingested_at":"2026-10-02T21:00:00.0000001Z"}
+{"event_id":"zero","ingest_seq":6,"account_id":"demo-try","metric":"api_calls","units":0,"ts":"2026-09-20T12:00:00Z","ingested_at":"2026-09-20T12:01:00Z"}
+{"event_id":"unknown","ingest_seq":7,"account_id":"missing","metric":"api_calls","units":1,"ts":"2026-09-20T12:00:00Z","ingested_at":"2026-09-20T12:01:00Z"}
+{broken

@@ -34,20 +34,24 @@ wheels = [
 
 [[package]]
 name = "rvn-ledger"
-version = "1.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "tzdata" },
+]
+
+[package.optional-dependencies]
+excel = [
     { name = "defusedxml" },
     { name = "openpyxl" },
-    { name = "tzdata" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "defusedxml", specifier = ">=0.7.1,<1" },
-    { name = "openpyxl", specifier = ">=3.1.5,<4" },
+    { name = "defusedxml", marker = "extra == 'excel'", specifier = ">=0.7.1,<1" },
+    { name = "openpyxl", marker = "extra == 'excel'", specifier = ">=3.1.5,<4" },
     { name = "tzdata", specifier = ">=2025.2" },
 ]
+provides-extras = ["excel"]
 
 [[package]]
 name = "tzdata"

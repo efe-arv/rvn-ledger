@@ -17,7 +17,8 @@ unusable account or period fails the run even when no event references it.
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
-from .inputs import EventRow, InputError
+from .context import BillingContext
+from .inputs import EventRow, period_metrics
 from .timing import account_bounds, classify_time
 from .validation import validate_event
 
@@ -84,14 +85,7 @@ class Classification:
 
 
 def _metrics(period) -> set[str]:
-    metrics = period.get('metrics') if isinstance(period, dict) else None
-    if not isinstance(metrics, list) or not metrics:
-        raise InputError('period.metrics must be a nonempty list')
-    if any(not isinstance(metric, str) or not metric for metric in metrics):
-        raise InputError('period.metrics entries must be nonempty strings')
-    if len(set(metrics)) != len(metrics):
-        raise InputError('period.metrics must not repeat a metric')
-    return set(metrics)
+    return set(period_metrics(period))
 
 
 def _assign(statuses: dict[int, str], line: int, status: str) -> None:
@@ -105,6 +99,15 @@ def classify_events(rows: list[EventRow], accounts: list, period: dict) -> Class
     """deduplicate -> validate -> time filter, with eager configuration checks first."""
     bounds = account_bounds(accounts, period)
     metrics = _metrics(period)
+    return _classify(rows, bounds, metrics)
+
+
+def classify_prepared(rows: list[EventRow], context: BillingContext) -> Classification:
+    """Classify using configuration already validated by the pipeline."""
+    return _classify(rows, context.bounds, set(context.metrics))
+
+
+def _classify(rows, bounds, metrics) -> Classification:
     selected = deduplicate(rows)
     statuses, reasons, accepted = {}, {}, []
     for line, reason in selected.rejected.items():

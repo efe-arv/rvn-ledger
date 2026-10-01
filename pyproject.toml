@@ -4,14 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rvn-ledger"
-version = "1.1.0"
+dynamic = ["version"]
 description = "Deterministic local usage billing and audit CLI"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["tzdata>=2025.2", "openpyxl>=3.1.5,<4", "defusedxml>=0.7.1,<1"]
+dependencies = ["tzdata>=2025.2"]
+
+[project.optional-dependencies]
+excel = ["openpyxl>=3.1.5,<4", "defusedxml>=0.7.1,<1"]
 
 [project.scripts]
 rvn-ledger = "rvn_ledger.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rvn_ledger"]
+
+[tool.hatch.version]
+path = "src/rvn_ledger/__init__.py"

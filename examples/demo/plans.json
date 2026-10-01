@@ -1,0 +1,9 @@
+{
+  "basic":{"plan_id":"basic","prices":{
+    "TRY":{"subscription_fee_minor":90,"metrics":{"api_calls":[{"from_units":0,"to_units":null,"unit_price_micros":10000}],"storage_gb_hours":[{"from_units":0,"to_units":null,"unit_price_micros":1000}]}},
+    "USD":{"subscription_fee_minor":30,"metrics":{"api_calls":[{"from_units":0,"to_units":null,"unit_price_micros":10000}],"storage_gb_hours":[{"from_units":0,"to_units":null,"unit_price_micros":1000}]}}
+  }},
+  "pro":{"plan_id":"pro","prices":{
+    "TRY":{"subscription_fee_minor":120,"metrics":{"api_calls":[{"from_units":0,"to_units":10,"unit_price_micros":5000},{"from_units":10,"to_units":null,"unit_price_micros":15000}],"storage_gb_hours":[{"from_units":0,"to_units":null,"unit_price_micros":1000}]}}
+  }}
+}

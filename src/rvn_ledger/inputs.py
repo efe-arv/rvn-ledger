@@ -20,11 +20,36 @@ from datetime import date
 import hashlib
 import json
 import math
-import sys
+
+# Products of admitted integers plus aggregate growth fit below Python's minimum
+# configurable decimal-conversion limit (640 digits), without changing it globally.
+MAX_INTEGER_DIGITS = 256
 
 
 class InputError(ValueError):
     """An unusable reference configuration; stop before billing."""
+
+
+class IntegerTooLarge(ValueError):
+    """A JSON integer exceeds the supported decimal input size."""
+
+
+def _bounded_int(text: str) -> int:
+    if len(text.lstrip('-')) > MAX_INTEGER_DIGITS:
+        raise IntegerTooLarge(f'JSON integers support at most {MAX_INTEGER_DIGITS} decimal digits')
+    return int(text)
+
+
+def period_metrics(period) -> tuple[str, ...]:
+    """Validate metric identities while preserving their configured order."""
+    metrics = period.get('metrics') if isinstance(period, dict) else None
+    if not isinstance(metrics, list) or not metrics:
+        raise InputError('period.metrics must be a nonempty list')
+    if any(not isinstance(metric, str) or not metric for metric in metrics):
+        raise InputError('period.metrics entries must be nonempty strings')
+    if len(set(metrics)) != len(metrics):
+        raise InputError('period.metrics must not repeat a metric')
+    return tuple(metrics)
 
 
 def local_date(value, what: str) -> date:
@@ -88,7 +113,7 @@ def _unicode_scalars(node):
 
 def _parse(raw):
     value = json.loads(raw.decode('utf-8'), object_pairs_hook=_unique_object,
-                       parse_constant=_reject_constant, parse_float=_finite_float)
+                       parse_constant=_reject_constant, parse_float=_finite_float, parse_int=_bounded_int)
     _unicode_scalars(value)
     return value
 
@@ -97,6 +122,8 @@ def read_json(raw: bytes, name: str):
     """Return parsed configuration plus the hash of the exact input bytes."""
     try:
         value = _parse(raw)
+    except IntegerTooLarge as exc:
+        raise InputError(f'{name}: {exc}') from exc
     except (UnicodeDecodeError, *_PARSE_FAILURES) as exc:
         raise InputError(f'{name}: invalid UTF-8 or JSON') from exc
     return value, hashlib.sha256(raw).hexdigest()
@@ -122,7 +149,6 @@ class EventRow:
 def _recover_identity(line: bytes) -> Identity | None:
     """Identity-only salvage for a strictly rejected line; never yields a payload."""
     top_level_keys = []
-    limit = sys.get_int_max_str_digits() or None
 
     def pairs(items):
         # The decoder hooks nested objects before their parent, so the last call sees
@@ -133,7 +159,7 @@ def _recover_identity(line: bytes) -> Identity | None:
 
     def bounded_int(text):
         # Over-long integers become an opaque marker instead of aborting the salvage.
-        return int(text) if limit is None or len(text.lstrip('-')) <= limit else object()
+        return int(text) if len(text.lstrip('-')) <= MAX_INTEGER_DIGITS else object()
 
     try:
         value = json.loads(line.decode('utf-8'), object_pairs_hook=pairs, parse_int=bounded_int)
@@ -162,6 +188,8 @@ def read_events(raw: bytes) -> list[EventRow]:
             rows.append(EventRow(index, digest, None, 'invalid_utf8'))
         except InvalidUnicode:
             rows.append(EventRow(index, digest, None, 'invalid_unicode', _recover_identity(line)))
+        except IntegerTooLarge:
+            rows.append(EventRow(index, digest, None, 'integer_too_large', _recover_identity(line)))
         except _PARSE_FAILURES:
             # RecursionError from over-deep nesting is quarantined, never a crash.
             rows.append(EventRow(index, digest, None, 'invalid_json', _recover_identity(line)))

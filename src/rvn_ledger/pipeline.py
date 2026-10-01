@@ -13,14 +13,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from .aggregation import aggregate_usage
 from .audit import build_audit
+from .context import prepare_context
+from . import __version__
 from .inputs import InputError, read_events, read_json
-from .invoice import build_invoices
-from .selection import classify_events
+from .invoice import assemble_invoices
+from .selection import classify_prepared
 
-LEDGER_VERSION = '1.1.0'
+LEDGER_VERSION = __version__
 RULES_SOURCE = 'AI Digital Engineering Take-Home: Ledger, billing rules 1-9 and the period.json output contract'
 INPUT_NAMES = ('events.jsonl', 'accounts.json', 'plans.json', 'period.json')
-CODE_MODULES = ('inputs.py', 'money.py', 'selection.py', 'validation.py', 'timing.py', 'aggregation.py', 'subscription.py',
+CODE_MODULES = ('__init__.py', 'context.py', 'inputs.py', 'money.py', 'selection.py', 'validation.py', 'timing.py', 'aggregation.py', 'subscription.py',
                 'tiers.py', 'invoice.py', 'audit.py', 'outputs.py', 'pipeline.py', 'cli.py', 'diagnostics.py', 'excel.py')
 
 
@@ -65,24 +67,12 @@ def run_ledger(raw: dict) -> LedgerRun:
         raise InputError('plans.json must be an object keyed by plan_id')
     if not isinstance(period, dict):
         raise InputError('period.json must be an object')
-    from .timing import account_bounds
-    from .selection import _metrics
-    from .subscription import all_subscriptions
-    from .invoice import account_credit
-    from .tiers import metric_tiers
-    account_bounds(accounts, period)
-    metrics_checked = _metrics(period)
-    subscriptions = all_subscriptions(accounts, period, plans)
-    for account in accounts:
-        account_credit(account)
-        subscription = subscriptions[account['account_id']]
-        for metric in metrics_checked:
-            metric_tiers(plans, subscription.period_end_plan_id, subscription.currency, metric)
+    context = prepare_context(accounts, period, plans)
     rows = read_events(raw['events.jsonl'])
-    classification = classify_events(rows, accounts, period)
-    invoices = build_invoices(accounts, period, plans, rows, classification)
-    metrics = list(period['metrics'])
-    usage = aggregate_usage(classification.accepted, [a['account_id'] for a in accounts], metrics)
+    classification = classify_prepared(rows, context)
+    metrics = list(context.metrics)
+    usage = aggregate_usage(classification.accepted, context.accounts, metrics)
+    invoices = assemble_invoices(context, rows, classification, usage)
     audit = build_audit(rows, classification, invoices, usage, period)
     quarantine = [{'event_id': d['event_id'], 'reason': d['reasons'][0]} for d in audit['decisions'] if d['status'] == 'quarantined']
     documents = [inv.as_contract() for inv in invoices]

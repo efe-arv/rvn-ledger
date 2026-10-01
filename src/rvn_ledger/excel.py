@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import zipfile
+import zlib
 from xml.etree.ElementTree import ParseError
 from defusedxml.common import DefusedXmlException
 from defusedxml.ElementTree import fromstring as safe_xml
@@ -188,6 +189,12 @@ def import_inputs(path):
             if sum(i.file_size for i in infos) > MAX_EXPANDED:
                 raise InputError('workbook expanded size exceeds limit')
             for info in infos:
+                if info.flag_bits & 1:
+                    raise InputError('encrypted workbook archives are not supported')
+                if info.flag_bits & ~0x080e:
+                    raise InputError('unsupported workbook archive flags')
+                if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    raise InputError('unsupported workbook archive compression')
                 if any(x in ('..', '') for x in info.filename.split('/')) or info.filename.startswith('/'):
                     raise InputError('invalid archive member path')
                 if any(token in info.filename.lower() for token in ('vbaproject', 'externallinks/', 'embeddings/')):
@@ -249,5 +256,5 @@ def import_inputs(path):
     except InputError:
         raise
     except (OSError, ValueError, TypeError, KeyError, zipfile.BadZipFile, EOFError, OverflowError,
-            ParseError, DefusedXmlException, UnicodeError, IndexError, AttributeError) as exc:
+            ParseError, DefusedXmlException, UnicodeError, IndexError, AttributeError, zlib.error) as exc:
         raise InputError('unreadable or malformed XLSX input workbook') from exc

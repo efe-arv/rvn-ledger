@@ -17,11 +17,13 @@ usage is zero, and `credit_minor` must be a nonnegative integer.
 """
 from dataclasses import dataclass
 from .aggregation import aggregate_usage
-from .inputs import EventRow, InputError
+from .context import BillingAccount, BillingContext, prepare_context
+from .context import account_credit as account_credit  # compatibility for verifier callers
+from .inputs import EventRow
 from .money import apply_credit
 from .selection import Classification
-from .subscription import Subscription, all_subscriptions
-from .tiers import UsageLine, metric_tiers, price_usage
+from .subscription import Subscription
+from .tiers import UsageLine, price_usage
 
 
 @dataclass(frozen=True)
@@ -55,15 +57,6 @@ class Invoice:
                 'total_minor': self.total_minor, 'quarantined_count': self.quarantined_count}
 
 
-def account_credit(account: dict) -> int:
-    if 'credit_minor' not in account:
-        raise InputError(f"{account.get('account_id')}: credit_minor is missing")
-    credit = account['credit_minor']
-    if type(credit) is not int or credit < 0:
-        raise InputError(f"{account.get('account_id')}: credit_minor must be a nonnegative integer")
-    return credit
-
-
 def quarantined_by_account(rows: list[EventRow], classification: Classification, account_ids: set[str]) -> dict[str, list[int]]:
     """Quarantined raw lines whose payload names a known account, in source order."""
     result = {account_id: [] for account_id in account_ids}
@@ -76,35 +69,31 @@ def quarantined_by_account(rows: list[EventRow], classification: Classification,
     return result
 
 
-def build_invoice(account: dict, subscription: Subscription, plans: dict, metrics: list[str], usage: dict,
+def build_invoice(account: BillingAccount, metrics: tuple[str, ...], usage: dict,
                   quarantined_lines: list[int]) -> Invoice:
     """One account: subscription segments, usage on the period-end plan, credit."""
-    credit = account_credit(account)
-    tariffs = {metric: metric_tiers(plans, subscription.period_end_plan_id, subscription.currency, metric) for metric in metrics}
+    subscription = account.subscription
     usage_lines = []
     billable = []
     for metric in metrics:
         units = usage[metric]['units']
         billable.append((metric, units))
-        usage_lines.extend(price_usage(units, tariffs[metric], metric))
+        usage_lines.extend(price_usage(units, account.tariffs[metric], metric))
     amounts = [s.amount_minor for s in subscription.segments] + [u.amount_minor for u in usage_lines]
-    subtotal, applied, remaining, total = apply_credit(amounts, credit)
-    return Invoice(subscription.account_id, subscription.currency, account['timezone'], tuple(billable), subscription,
-                   tuple(usage_lines), subtotal, credit, applied, remaining, total, tuple(quarantined_lines))
+    subtotal, applied, remaining, total = apply_credit(amounts, account.credit_minor)
+    return Invoice(subscription.account_id, subscription.currency, account.timezone, tuple(billable), subscription,
+                   tuple(usage_lines), subtotal, account.credit_minor, applied, remaining, total, tuple(quarantined_lines))
 
 
 def build_invoices(accounts: list, period: dict, plans: dict, rows: list[EventRow], classification: Classification) -> list[Invoice]:
     """Every account, sorted by account_id; any unusable configuration stops the run before an invoice exists."""
-    if not isinstance(accounts, list) or not accounts:
-        raise InputError('accounts must be a nonempty list')
-    subscriptions = all_subscriptions(accounts, period, plans)          # eager: every plan segment priceable
-    by_id = {}
-    for account in accounts:
-        if not isinstance(account, dict) or not isinstance(account.get('timezone'), str):
-            raise InputError('every account entry must be an object with a timezone')
-        by_id[account['account_id']] = account
-    metrics = list(period['metrics'])
-    usage = aggregate_usage(classification.accepted, list(by_id), metrics)
-    quarantined = quarantined_by_account(rows, classification, set(by_id))
-    return [build_invoice(by_id[account_id], subscription, plans, metrics, usage[account_id], quarantined[account_id])
-            for account_id, subscription in subscriptions.items()]
+    context = prepare_context(accounts, period, plans)
+    usage = aggregate_usage(classification.accepted, context.accounts, context.metrics)
+    return assemble_invoices(context, rows, classification, usage)
+
+
+def assemble_invoices(context: BillingContext, rows: list[EventRow], classification: Classification, usage: dict) -> list[Invoice]:
+    """Assemble invoices from the same prepared configuration and totals as the audit."""
+    quarantined = quarantined_by_account(rows, classification, set(context.accounts))
+    return [build_invoice(account, context.metrics, usage[account_id], quarantined[account_id])
+            for account_id, account in context.accounts.items()]

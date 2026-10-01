@@ -1,0 +1,6 @@
+[
+  {"account_id":"demo-try","timezone":"Europe/Istanbul","currency":"TRY","credit_minor":5,
+   "plan_segments":[{"plan_id":"basic","from":"2026-09-01","to":"2026-09-16"},{"plan_id":"pro","from":"2026-09-16","to":"2026-10-01"}]},
+  {"account_id":"demo-usd","timezone":"UTC","currency":"USD","credit_minor":999,
+   "plan_segments":[{"plan_id":"basic","from":"2026-09-01","to":"2026-10-01"}]}
+]

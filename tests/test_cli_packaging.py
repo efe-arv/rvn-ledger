@@ -36,10 +36,11 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('rvn-ledger', s.getvalue())
 
     def test_version(self):
+        from rvn_ledger import __version__
         with contextlib.redirect_stdout(io.StringIO()) as s, self.assertRaises(SystemExit) as e:
             main(['--version'])
         self.assertEqual(e.exception.code, 0)
-        self.assertIn('1.1.0', s.getvalue())
+        self.assertIn(__version__, s.getvalue())
 
     def test_missing_input(self):
         with tempfile.TemporaryDirectory() as d, contextlib.redirect_stderr(io.StringIO()) as s:

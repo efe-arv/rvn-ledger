@@ -18,13 +18,17 @@ Reference-data validation
 
 The stages are separated into small Python modules so that money, time boundaries, record selection, and publication can be tested independently. The billing path makes no network or large language model (LLM) calls. Authentication, a database, a user interface, and hosted deployment are unnecessary for the assignment.
 
-The packaged CLI adds installation, diagnostics, and Excel transport around this core. Those extensions do not define billing policy: the JSON inputs and validated JSON output set remain authoritative.
+The packaged CLI adds installation and diagnostics around this core. Excel transport is a separate, optional `[excel]` extension with its own dependency group and documentation. The assignment's 5–6 hour scope is the core CLI, correctness, audit and focused tests; spreadsheet convenience is follow-on work. The JSON inputs and validated JSON output set remain authoritative.
+
+A frozen `BillingContext` resolves metric order, account bounds, subscription segments, credits and period-end tariffs once. Read-only mappings and frozen values prevent later changes to raw configuration from changing that context. The pipeline classifies once and aggregates once; invoice construction and the audit consume the same totals and source references. Compatibility helpers remain available for focused tests and verifier scripts.
 
 ## 2. Invariants
 
 ### Exact money, with rounding at the specified boundary
 
 Monetary amounts are nonnegative Python integers in minor currency units. Booleans are rejected even though Python treats them as integers. Floating-point values are not accepted as amounts, and output serialization rejects floats anywhere in the documents.
+
+The JSON parser admits integers of at most 256 decimal digits, excluding the minus sign. This explicit resource bound leaves arithmetic headroom: two admitted magnitudes need at most 512 digits when multiplied, and a realizable batch's aggregate count adds far fewer than the remaining 128 digits below Python's minimum configurable 640-digit conversion limit. The process-wide interpreter limit is never disabled. Oversized event integers become `integer_too_large`; oversized reference data raises an input error before publication. Identity-only recovery applies the same bound, preserving canonical selection when the event ID and sequence are readable. Boundary tests exercise maximal prices and accumulated usage with `PYTHONINTMAXSTRDIGITS=640`.
 
 For a nonnegative integer numerator `n` and a positive integer denominator `d`, half-up rounding is computed without floating-point division:
 
@@ -121,6 +125,8 @@ For each account, calculation then proceeds through subscription segments, perio
 
 The test suite covers the specified hazards individually and combines them in regression cases. Seeded property tests check conservation and independence properties, including credit monotonicity, duplicate non-interference, and account isolation. File-order invariance applies where canonical-copy ordering is unambiguous; it does not override the documented equal-sequence tie-breaker.
 
+The committed synthetic demo has hand-derived complete expected invoices and quarantine entries. CI installs the wheel through pip, changes the command's working directory outside the checkout, and exercises `run → check → explain → export → import → run`. It compares full expected invoice objects, repeated output bytes, reconstructed input bytes and post-import billing output bytes. A separate base-install step proves the core works without Excel and that optional commands explain the missing extra. Tag, package, CLI, manifest and README versions are checked together.
+
 Correctness checks use explicit runtime validation, not Python `assert` statements that disappear under optimization. The suite is also exercised with optimized Python execution. Repeated runs and differing host time-zone settings check that ambient host settings do not change the output for a fixed billing environment.
 
 Independent raw-input recomputation complements internal reconciliation. Regression tests specifically cover hazards found during review, including sub-microsecond cutoff violations and malformed Unicode identifiers that previously threatened publication. A correct result on the supplied data is not sufficient evidence that those boundary cases are correct.
@@ -131,7 +137,39 @@ The assignment's hidden reference invoices are unavailable. Local verification d
 
 The current implementation materializes inputs, parsed records, classifications, source references, and serialized output in memory. This is a deliberate simplicity trade-off for the supplied batch, not a claim of bounded-memory streaming.
 
-At 1000× volume, I would first measure peak memory, parsing time, canonical-copy selection, audit construction, serialization, and output I/O. The likely first constraint is retained per-event state, especially the audit trail. The billing rules, precedence, integer arithmetic, and traceability requirements would remain unchanged.
+The current measurements below show approximately linear growth in retained Python memory. At 1000× volume, retained per-event state and the audit trail are the first targets for a bounded-memory implementation. Stage-level profiling would separate parsing, canonical selection, audit construction, serialization and I/O before changing the algorithm. The billing rules, precedence, integer arithmetic and traceability requirements remain unchanged.
+
+### Measured batch sizes
+
+Measured on Windows 11, CPython 3.12.14, rvn-ledger 1.2.0 and tzdata 2026.4.
+Each size has three samples, each in a fresh process. The synthetic workload
+has two accounts/currencies, two metrics and unique, valid, accepted events.
+The baseline is 1,000 synthetic events, not a multiplication of the private
+1,078-line assignment file.
+
+| Scale | Events | Median seconds | Maximum peak Python allocations (MiB) |
+|---|---:|---:|---:|
+| 1× | 1,000 | 0.268 | 2.565 |
+| 10× | 10,000 | 2.321 | 21.656 |
+| 100× | 100,000 | 22.765 | 215.610 |
+
+The timed command reads inputs, bills, reconciles, publishes and checks the
+output set. Timing includes `tracemalloc` overhead and excludes interpreter
+startup. Memory is peak traced Python allocation, not process RSS; native/OS
+allocations and filesystem cache are excluded. Host load and file caching are
+not controlled. These are local observations, not latency guarantees.
+**1,000× has not been measured.**
+
+[Raw samples and installed-source hashes](docs/benchmark-results.json) record
+the measurement environment. Reproduce from a non-editable installation:
+
+```sh
+python scripts/benchmark.py --scales 1 10 100 --base-events 1000 --repeats 3 --json benchmark-results.json
+```
+
+The benchmark is opt-in and uses only generated synthetic data. The growth
+observed at 100× motivates the following two-pass selection and streamed-audit
+design before claiming million-event capacity.
 
 ### Bound memory without changing canonical-copy semantics
 

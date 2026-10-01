@@ -36,7 +36,8 @@ SOURCE_PROVENANCE = {
     'input_sha256': dict(INPUT_SHA256),
 }
 SUITE_ARGS = ('-m', 'unittest', 'discover', '-s', 'tests', '-v')
-HASHED_PATTERNS = ('*.py', 'src/**/*.py', 'tests/*.py', 'pyproject.toml', 'uv.lock', '*.log', '*.md')
+HASHED_PATTERNS = ('*.py', 'src/**/*.py', 'tests/*.py', 'scripts/*.py', 'examples/demo/*',
+                  'docs/**/*.md', 'docs/*.json', 'pyproject.toml', 'uv.lock', '*.log', '*.md')
 # Rewritten by every run of their gate (unittest prints the run duration), so a receipt may
 # only hash its own copy; another gate's copy would go stale the moment that gate runs again.
 REGENERATED_OUTPUTS = ('*-verify-suite.log',)

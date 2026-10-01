@@ -3,13 +3,14 @@ import hashlib
 import json
 from pathlib import Path
 from .audit import reconcile
-from .inputs import InputError, read_events
+from .inputs import InputError, MAX_INTEGER_DIGITS, read_events
 from .outputs import check_outputs, OutputError
 
 REASONS = {
     'invalid_utf8': ('record', 'Source bytes are not valid UTF-8.'),
     'invalid_json': ('record', 'JSON is malformed, ambiguous, non-finite, or too deeply nested.'),
     'invalid_unicode': ('record', 'JSON contains an unpaired Unicode surrogate.'),
+    'integer_too_large': ('record', f'A JSON integer exceeds the supported {MAX_INTEGER_DIGITS} decimal digits.'),
     'not_object': ('record', 'An event must be a JSON object.'),
     'invalid_event_id': ('event_id', 'Expected a nonempty text event identifier.'),
     'invalid_ingest_seq': ('ingest_seq', 'Expected an integer ingestion sequence, not a boolean or decimal.'),
