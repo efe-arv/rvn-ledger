@@ -84,6 +84,24 @@ def reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manifes
         _require(all(isinstance(value, dict) for value in manifest['inputs'].values())
                  and isinstance(manifest['versions'].get('code_sha256'), dict)
                  and isinstance(manifest['rules'].get('metrics'), list), 'invalid nested manifest containers')
+        required_inputs = {'events.jsonl', 'accounts.json', 'plans.json', 'period.json'}
+        _require(set(manifest['inputs']) == required_inputs, 'manifest inputs must contain exactly the four required names')
+        for name, metadata in manifest['inputs'].items():
+            _require(set(metadata) == {'sha256', 'bytes', 'records'}, f'{name}: invalid input metadata fields')
+            digest = metadata.get('sha256')
+            _require(isinstance(digest, str) and len(digest) == 64
+                     and all(c in '0123456789abcdef' for c in digest), f'{name}: invalid input sha256')
+            for field in ('bytes', 'records'):
+                value = metadata.get(field)
+                _require(type(value) is int and value >= 0, f'{name}: invalid input {field}')
+            _require(metadata['bytes'] > 0 or name == 'events.jsonl', f'{name}: empty configuration input')
+            _require(metadata['records'] > 0 or name == 'events.jsonl', f'{name}: empty configuration records')
+            if name == 'period.json':
+                _require(metadata['records'] == 1, 'period.json: records must be 1')
+        _require(manifest['inputs']['events.jsonl']['records'] == manifest['counts'].get('raw'),
+                 'events.jsonl: records differ from raw count')
+        _require(manifest['inputs']['accounts.json']['records'] == len(invoices),
+                 'accounts.json: records differ from invoice count')
         _reconcile(invoices, quarantine, audit, manifest)
     except (KeyError, TypeError, AttributeError, ValueError, IndexError, OverflowError, ZeroDivisionError, RecursionError) as exc:
         raise AuditError('malformed output document: missing field, invalid type or arithmetic value') from exc

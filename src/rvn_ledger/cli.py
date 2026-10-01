@@ -21,6 +21,18 @@ from .outputs import OutputError, check_outputs, publish, serialize  # noqa: E40
 from .pipeline import INPUT_NAMES, run_ledger  # noqa: E402
 
 
+def display(message, stream):
+    """Preserve representable text; escape only unsupported characters for human display."""
+    encoding = getattr(stream, 'encoding', None)
+    text = str(message)
+    return text.encode(encoding, errors='backslashreplace').decode(encoding) if encoding else text
+
+
+def human_display(message, *, file=None):
+    stream = sys.stdout if file is None else file
+    print(display(message, stream), file=stream)
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(prog='rvn-ledger', description='Turn a month of raw usage events into exact, reproducible invoices.')
     from . import __version__
@@ -81,7 +93,7 @@ def command_run(args) -> int:
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
-        print(f"OK: {manifest['counts']['invoices']} invoices; {manifest['counts']['quarantine_entries']} quarantined -> {args.out}")
+        human_display(f"OK: {manifest['counts']['invoices']} invoices; {manifest['counts']['quarantine_entries']} quarantined -> {args.out}")
     return 0
 
 
@@ -94,12 +106,14 @@ def command_check(args) -> int:
             raise OutputError(f'{name}: unreadable or invalid JSON') from exc
     reconcile(load('invoices.json'), load('quarantine.json'), load('audit.json'), manifest)
     summary = {'out': str(args.out), 'result': 'OK', 'counts': manifest['counts']}
-    print(json.dumps(summary, indent=2) if args.json else f'OK: output hashes and audit reconciled -> {args.out}')
-    return 0
+    return _summary(args, summary, f'OK: output hashes and audit reconciled -> {args.out}')
 
 
 def _summary(args, summary, message):
-    print(json.dumps(summary, indent=2, ensure_ascii=True) if args.json else message)
+    if args.json:
+        print(json.dumps(summary, indent=2, ensure_ascii=True))
+    else:
+        human_display(message)
     return 0
 
 
@@ -111,7 +125,7 @@ def command_explain(args):
              ''.join(f"\n  {reason['code']} ({reason['field']}): {reason['message']}" +
                      (f" value={json.dumps(reason['value'], ensure_ascii=True)}" if 'value' in reason else '') for reason in r['reasons']) +
              (f"\n  canonical_line={r['canonical_line']}" if 'canonical_line' in r else '') for r in result['records']]
-    return _summary(args, result, '\n'.join(lines) if lines else 'OK: no quarantined records')
+    return _summary(args, result, f"OK: {len(lines)} records\n" + '\n'.join(lines) if lines else 'OK: no quarantined records')
 
 
 def command_export(args):
@@ -168,16 +182,16 @@ def main(argv=None) -> int:
         return {'run': command_run, 'check': command_check, 'explain': command_explain,
                 'export': command_export, 'import': command_import}[args.command](args)
     except InputError as exc:
-        print(f'error: {exc}', file=sys.stderr)
+        human_display(f'error: {exc}', file=sys.stderr)
         return 2
     except (OutputError, OSError) as exc:
-        print(f'{"check failed" if args.command == "check" else "publication failed"}: {exc}', file=sys.stderr)
+        human_display(f'{"check failed" if args.command == "check" else "publication failed"}: {exc}', file=sys.stderr)
         return 2
     except AuditError as exc:
-        if args.command == 'check':
-            print(f'check failed: {exc}', file=sys.stderr)
+        if args.command in ('check', 'explain') or (args.command == 'export' and args.kind == 'report'):
+            human_display(f'check failed: {exc}', file=sys.stderr)
             return 2
-        print(f'internal error: run did not reconcile, nothing published: {exc}', file=sys.stderr)
+        human_display(f'internal error: run did not reconcile, nothing published: {exc}', file=sys.stderr)
         return 1
 
 
