@@ -211,7 +211,8 @@ class SafeHumanDisplayTests(unittest.TestCase):
                 self.assertEqual(main(['import', '--file', str(Path(tmp) / f'girdi-{self.NAME}.xlsx'), '--input-dir', str(Path(tmp) / f'ice-{self.NAME}')]), 0)
             stream.flush()
             text = raw.getvalue().decode('cp1252')
-            self.assertEqual(text.count('OK:'), 6, text)
+            self.assertEqual(text.count('OK:'), 5, text)
+            self.assertIn('events.jsonl:8 event="a7" status=quarantined', text)
             self.assertIn(self.ESCAPED, text)
             self.assertNotIn(self.NAME, text)
             self.assertTrue((out / 'manifest.json').is_file())
@@ -226,7 +227,11 @@ class SafeHumanDisplayTests(unittest.TestCase):
                 result = run_cli(*args, env=env)
                 self.assertEqual(result.returncode, 0, (args, result.stderr))
                 self.assertNotIn('Traceback', result.stderr, args)
-                self.assertIn('OK:', result.stdout, args)
+                if args[0] == 'explain':
+                    self.assertTrue(result.stdout.startswith('events.jsonl:8 event="a7" status=quarantined\n'), result.stdout)
+                    self.assertNotIn('OK:', result.stdout)
+                else:
+                    self.assertIn('OK:', result.stdout, args)
             run = run_cli('run', '--input-dir', inputs, '--out', out, env=env)
             self.assertIn(self.ESCAPED, run.stdout)
 

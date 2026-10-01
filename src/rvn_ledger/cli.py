@@ -125,7 +125,7 @@ def command_explain(args):
              ''.join(f"\n  {reason['code']} ({reason['field']}): {reason['message']}" +
                      (f" value={json.dumps(reason['value'], ensure_ascii=True)}" if 'value' in reason else '') for reason in r['reasons']) +
              (f"\n  canonical_line={r['canonical_line']}" if 'canonical_line' in r else '') for r in result['records']]
-    return _summary(args, result, f"OK: {len(lines)} records\n" + '\n'.join(lines) if lines else 'OK: no quarantined records')
+    return _summary(args, result, '\n'.join(lines) if lines else 'OK: no quarantined records')
 
 
 def command_export(args):
