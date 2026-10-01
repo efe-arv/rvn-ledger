@@ -1,32 +1,9 @@
 import random
 import unittest
-from fractions import Fraction
+
 from rvn_ledger.inputs import InputError
 
-# Tariffs mirror the shape of plans.json; numbers chosen so every boundary and rounding case is hand-checkable.
-PLANS = {
-    'starter': {'plan_id': 'starter', 'prices': {
-        'USD': {'subscription_fee_minor': 2900, 'metrics': {
-            'api_calls': [{'from_units': 0, 'to_units': 10000, 'unit_price_micros': 2500},
-                          {'from_units': 10000, 'to_units': None, 'unit_price_micros': 1800}],
-            'storage_gb_hours': [{'from_units': 0, 'to_units': None, 'unit_price_micros': 1250}]}},
-        'TRY': {'subscription_fee_minor': 99900, 'metrics': {
-            'api_calls': [{'from_units': 0, 'to_units': 10000, 'unit_price_micros': 86000},
-                          {'from_units': 10000, 'to_units': None, 'unit_price_micros': 61000}],
-            'storage_gb_hours': [{'from_units': 0, 'to_units': None, 'unit_price_micros': 42000}]}}}},
-    'growth': {'plan_id': 'growth', 'prices': {
-        'USD': {'subscription_fee_minor': 9900, 'metrics': {
-            'api_calls': [{'from_units': 0, 'to_units': 50000, 'unit_price_micros': 1900},
-                          {'from_units': 50000, 'to_units': 250000, 'unit_price_micros': 1400},
-                          {'from_units': 250000, 'to_units': None, 'unit_price_micros': 900}],
-            'storage_gb_hours': [{'from_units': 0, 'to_units': 5000, 'unit_price_micros': 1100},
-                                 {'from_units': 5000, 'to_units': None, 'unit_price_micros': 800}]}}}},
-}
-
-
-def reference_line(units, price_micros):
-    # Independent reference: exact rational arithmetic, half rounds up.
-    return int(Fraction(units * price_micros, 10000) + Fraction(1, 2))
+from fixtures import TIER_PLANS as PLANS, reference_line
 
 
 def reference_split(units, tiers):

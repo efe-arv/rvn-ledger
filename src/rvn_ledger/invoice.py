@@ -18,12 +18,11 @@ usage is zero, and `credit_minor` must be a nonnegative integer.
 from dataclasses import dataclass
 from .aggregation import aggregate_usage
 from .context import BillingAccount, BillingContext, prepare_context
-from .context import account_credit as account_credit  # compatibility for verifier callers
 from .inputs import EventRow
 from .money import apply_credit
 from .selection import Classification
 from .subscription import Subscription
-from .tiers import UsageLine, price_usage
+from .tiers import Tier, UsageLine, price_usage
 
 
 @dataclass(frozen=True)
@@ -40,6 +39,7 @@ class Invoice:
     credit_remaining_minor: int
     total_minor: int
     quarantined_lines: tuple[int, ...]              # raw line numbers attributed to this account
+    tariffs: tuple[tuple[str, tuple[Tier, ...]], ...] = ()   # (metric, tiers) the usage was priced on
 
     @property
     def quarantined_count(self) -> int:
@@ -82,7 +82,8 @@ def build_invoice(account: BillingAccount, metrics: tuple[str, ...], usage: dict
     amounts = [s.amount_minor for s in subscription.segments] + [u.amount_minor for u in usage_lines]
     subtotal, applied, remaining, total = apply_credit(amounts, account.credit_minor)
     return Invoice(subscription.account_id, subscription.currency, account.timezone, tuple(billable), subscription,
-                   tuple(usage_lines), subtotal, account.credit_minor, applied, remaining, total, tuple(quarantined_lines))
+                   tuple(usage_lines), subtotal, account.credit_minor, applied, remaining, total, tuple(quarantined_lines),
+                   tuple((metric, account.tariffs[metric]) for metric in metrics))
 
 
 def build_invoices(accounts: list, period: dict, plans: dict, rows: list[EventRow], classification: Classification) -> list[Invoice]:

@@ -1,6 +1,6 @@
 # Synthetic demo
 
-These are original synthetic inputs, not the supplied assignment dataset.
+A small synthetic month, small enough to bill by hand.
 
 `demo-try` changes plan halfway through the month: subscription charges are
 `90 * 15 / 30 = 45` and `120 * 15 / 30 = 60` minor units. Its period-end plan

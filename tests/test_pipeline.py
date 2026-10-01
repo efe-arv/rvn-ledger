@@ -1,4 +1,6 @@
+import copy
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -6,28 +8,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from test_invoice import ACCOUNTS, EXPECTED_INVOICES, EXPECTED_QUARANTINE, PERIOD, PLANS, RAW_EVENTS
+from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / 'data'
-CLI = ROOT / 'cli.py'
-
-
-def write_fixture(directory: Path, accounts=ACCOUNTS, raw=RAW_EVENTS, period=PERIOD, plans=PLANS):
-    directory.mkdir(parents=True, exist_ok=True)
-    (directory / 'events.jsonl').write_bytes(raw)
-    (directory / 'accounts.json').write_text(json.dumps(accounts))
-    (directory / 'plans.json').write_text(json.dumps(plans))
-    (directory / 'period.json').write_text(json.dumps(period))
-    return directory
-
-
-def run_cli(*args, cwd=None, env=None):
-    return subprocess.run([sys.executable, str(CLI), *map(str, args)], cwd=cwd, env=env, capture_output=True, text=True)
-
-
-def snapshot(directory: Path) -> dict:
-    return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(directory.iterdir())}
+from fixtures import ACCOUNTS, CLI_ARGS, DATA, EXPECTED_INVOICES, EXPECTED_QUARANTINE, PERIOD, PLANS, RAW_EVENTS, ROOT, run_cli, snapshot, write_fixture
 
 
 class PipelineTests(unittest.TestCase):
@@ -75,6 +58,17 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(all(l['kind'] == 'subscription' for inv in run.invoices for l in inv['lines']))
         self.assertEqual(run.quarantine, [])
         self.assertEqual(run.manifest['counts']['raw'], 0)
+
+    def test_configuration_is_checked_before_event_reader(self):
+        from rvn_ledger.inputs import InputError
+        from rvn_ledger.pipeline import run_ledger
+        broken = copy.deepcopy(ACCOUNTS)
+        broken[0]['credit_minor'] = -1
+        raw = {'events.jsonl': RAW_EVENTS, 'accounts.json': json.dumps(broken).encode(),
+               'plans.json': json.dumps(PLANS).encode(), 'period.json': json.dumps(PERIOD).encode()}
+        with patch('rvn_ledger.pipeline.read_events', side_effect=AssertionError('events read before config')):
+            with self.assertRaises(InputError):
+                run_ledger(raw)
 
 
 class CliTests(unittest.TestCase):
@@ -129,14 +123,51 @@ class CliTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
         with tempfile.TemporaryDirectory() as tmp:
             inputs = write_fixture(Path(tmp) / 'in')
-            result = subprocess.run([sys.executable, '-I', str(CLI), 'run', '--input-dir', str(inputs), '--out', str(Path(tmp) / 'out')],
+            result = subprocess.run([sys.executable, '-I', *CLI_ARGS[1:], 'run', '--input-dir', str(inputs), '--out', str(Path(tmp) / 'out')],
                                     capture_output=True, text=True, env={key: os.environ[key] for key in ('PATH', 'SystemRoot', 'WINDIR') if key in os.environ})
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_surrogate_record_quarantines_and_valid_records_still_publish(self):
+        for field in ('event_id', 'metric', 'extra', 'nested'):
+            event = {'event_id': 'bad', 'ingest_seq': 0, 'account_id': ACCOUNTS[0]['account_id'],
+                     'metric': 'api_calls', 'units': None, 'ts': '2026-09-15T12:00:00Z',
+                     'ingested_at': '2026-09-15T12:00:00Z'}
+            event[field] = {'key\ud800': ['\udfff']} if field == 'nested' else 'bad\ud800'
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                inputs = write_fixture(Path(tmp) / 'in', raw=json.dumps(event).encode() + b'\n' + RAW_EVENTS)
+                out = Path(tmp) / 'out'
+                result = run_cli('run', '--input-dir', inputs, '--out', out)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                quarantine = json.loads((out / 'quarantine.json').read_bytes())
+                self.assertEqual(quarantine[0]['reason'], 'invalid_unicode')
+                self.assertEqual(run_cli('check', '--out', out).returncode, 0)
+                self.assertEqual(json.loads((out / 'manifest.json').read_bytes())['counts']['accepted'], 8)
+
+    def test_io_error_has_controlled_cli_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = write_fixture(Path(tmp) / 'in')
+            out = Path(tmp) / 'file-not-directory'
+            out.write_bytes(b'keep')
+            result = run_cli('run', '--input-dir', inputs, '--out', out)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertNotIn('Traceback', result.stderr)
+            self.assertEqual(out.read_bytes(), b'keep')
+
+    @unittest.skipUnless(importlib.util.find_spec("tzdata"), "optional tzdata package absent; system timezone path tested elsewhere")
+    def test_isolated_runtime_with_package_only_timezone_database(self):
+        # Simulates Windows' absent system zoneinfo tree without claiming Windows execution.
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = write_fixture(Path(tmp) / 'in')
+            script = "import zoneinfo,runpy,sys; zoneinfo.reset_tzpath([]); sys.argv=['rvn-ledger']+sys.argv[1:]; runpy.run_module('rvn_ledger',run_name='__main__')"
+            result = subprocess.run([sys.executable, '-I', '-c', script, 'run', '--input-dir', str(inputs),
+                                     '--out', str(Path(tmp) / 'out')], capture_output=True, text=True,
+                                    env={**os.environ, 'PYTHONTZPATH': ''})
             self.assertEqual(result.returncode, 0, result.stderr)
 
 
 @unittest.skipUnless(DATA.is_dir(), 'supplied inputs not present')
 class RealDataTests(unittest.TestCase):
-    """The supplied dataset; expected counts come from the timing/aggregation receipts (independent re-derivation)."""
+    """The real input set in ./data, when present (it is not committed); counts were cross-checked by an independent re-derivation."""
 
     def test_supplied_inputs_run_twice_byte_identical_with_reconciled_counts(self):
         from rvn_ledger.audit import reconcile

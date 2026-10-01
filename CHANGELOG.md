@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.0 — 2026-10-02
+
+- `main` is now the command-line tool only: `run`, `check`, `explain`. Excel support moved to the
+  `feature/excel` branch and the standalone verification scripts to `feature/independent-verifiers`.
+  The root `cli.py` shim is gone; use `rvn-ledger` or `python -m rvn_ledger`.
+- Every billing rule is implemented once. Audit reconciliation now checks rule-independent invariants and
+  recomputes each line from the recorded inputs through the same `money` and `tiers` functions, instead of a
+  second copy of the arithmetic. `audit.json` records the tariff each usage line was priced on.
+- Currencies are no longer a hard-coded list: any three-letter code is accepted if `plans.json` prices it.
+- Tests reorganised: `tests/test_hazards.py` (one test per rule), `tests/test_invariants.py`, shared fixtures in
+  `tests/fixtures.py`; review-round test files folded into the module they test.
+- Invoices and quarantine output for the same inputs are byte-identical to 1.2.0.
+
 ## 1.2.0 — 2026-10-01
 
 - Include the manifest-input validation, source receipt hashes and Windows Unicode display fixes in a new pinned release.

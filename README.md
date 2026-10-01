@@ -1,131 +1,227 @@
 # rvn-ledger
 
-Exact, reproducible usage invoices from four local files. Python 3.11+.
-The billing path makes no network or model calls. It uses integer money,
-account-local billing periods, deterministic duplicate selection and a checked
-audit trail.
+Turn a month of raw usage events into exact, reproducible, auditable invoices.
 
-## Install the reviewed release
+`rvn-ledger` is a command-line tool. It reads four files — the usage events, the
+accounts, the price plans and the billing period — and writes one invoice per
+account, a quarantine report for records it could not bill, an audit trail and a
+run manifest. Money is integer minor units (cents, kuruş) end to end, every
+invoice line can be traced back to the events that produced it, and running it
+twice on the same inputs produces byte-identical files.
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first.
-This repository is private: your Git account must have access. Use a credential
-manager or `gh auth setup-git`; never embed tokens in URLs.
+The event stream is assumed to be messy: delivered at least once, out of order,
+sometimes duplicated with a different payload, sometimes late, malformed or for
+an account that does not exist. None of that stops a run; each record gets
+exactly one recorded outcome.
 
-```sh
-uv tool install --force git+https://github.com/efe-arv/rvn-ledger.git@v1.2.0
-rvn-ledger --version
-```
+No network access, no database, no model calls. Python 3.11+ and the `tzdata`
+package (installed automatically) are the only requirements.
 
-Expected version: `rvn-ledger 1.2.0`. `uv tool update-shell` can add the executable
-directory to PATH; reopen the terminal afterward. The same commands work in
-Windows PowerShell. `tzdata` installs automatically for IANA time zones.
-
-`v1.2.0` includes the final review fixes. `v1.1.0` is a historical release and
-does not include those fixes. Tags are immutable; use the version above when
-upgrading. There is no public package-registry release.
-
-## Three-minute synthetic demo
-
-From a checkout of this repository, with the tool installed:
+## Quick start
 
 ```sh
-rvn-ledger run --input-dir ./examples/demo --out ./out/demo --json
-rvn-ledger check --out ./out/demo
-rvn-ledger explain --out ./out/demo --events ./examples/demo/events.jsonl
+git clone https://github.com/efe-arv/rvn-ledger.git
+cd rvn-ledger
+python -m pip install .          # or: uv sync
+
+rvn-ledger run --input-dir examples/demo --out out/demo
+rvn-ledger check --out out/demo
+rvn-ledger explain --out out/demo --events examples/demo/events.jsonl
 ```
 
-Expected: **2 invoices, 3 quarantined records**. The payable amounts are
-**109 TRY minor units** and **0 USD minor units**. The synthetic fixture covers
-plan changes, cumulative tiers, rounding, credits, conflicting duplicates,
-local boundaries, late arrivals and an account with no usage.
-[Hand-derived arithmetic and expected invoices](examples/demo/README.md) are
-committed alongside it; these are not the private assignment inputs.
+Expected: `OK: 2 invoices; 3 quarantined -> out/demo`. The demo is a small
+synthetic month whose invoices were worked out by hand in
+[examples/demo/README.md](examples/demo/README.md): a plan change mid-month,
+cumulative tiers, half-up rounding, a capped credit, a conflicting duplicate, a
+local-midnight boundary, a late arrival and an account with no usage.
 
-## Bill your inputs
-
-Place your authorized `events.jsonl`, `accounts.json`, `plans.json` and
-`period.json` files in `./data`, then run:
+To install the command without cloning:
 
 ```sh
-rvn-ledger run
-rvn-ledger check
-rvn-ledger run --input-dir ./data --out ./results --json
-rvn-ledger check --out ./results --json
+python -m pip install git+https://github.com/efe-arv/rvn-ledger.git
+# or
+uv tool install git+https://github.com/efe-arv/rvn-ledger.git
 ```
 
-`run` produces `invoices.json`, `quarantine.json`, `audit.json` and `manifest.json`,
-then checks hashes and reconciliation. Human summaries are default; `--json`
-emits one JSON object. Individual `--events`, `--accounts`, `--plans`, `--period`
-paths override `--input-dir`. `-help`, `-run`, `-check` remain compatibility aliases.
-Missing inputs fail explicitly; there is no implicit demo-data fallback.
+`python -m rvn_ledger ...` works anywhere `rvn-ledger ...` does.
 
-Exit codes: **0** success; **2** invalid input, usage, I/O or failed output check;
-**1** internal reconciliation failure. Diagnostics go to stderr.
+## Running it on your own data
 
-JSON integers support at most **256 decimal digits**, excluding a minus sign.
-This parser resource bound leaves room for exact multiplication and aggregation
-before decimal output. Oversized event values receive `integer_too_large` and
-are quarantined; unambiguous identity still participates in duplicate selection.
-Oversized reference configuration fails before publication. No values are
-clamped, rounded early or silently corrected.
-
-Publication rolls back caught replacement errors, but is not crash/power-loss
-atomic. Consumers must wait for publication to finish and run `check` before
-using outputs. Hashes and reconciliation verify consistency, not a signature or
-independent proof of every pricing input.
-
-## Explain a record
+Put `events.jsonl`, `accounts.json`, `plans.json` and `period.json` in `./data`, then:
 
 ```sh
-rvn-ledger explain --out ./results
-rvn-ledger explain --out ./results --line 12
-rvn-ledger explain --out ./results --event-id example-event --json
-rvn-ledger explain --out ./results --events ./data/events.jsonl --json
+rvn-ledger run              # reads ./data, writes ./out
+rvn-ledger check            # re-verifies ./out
 ```
 
-Without a selector, lists quarantined physical lines. Exact event selection
-includes all copies and the duplicate's canonical line. Reports ordered reasons,
-relevant fields and source line/hash. Original values are shown only when
-`--events` matches the run's input hash. Output verification happens first.
-The command does not modify or resolve records.
+| Option | Meaning |
+|---|---|
+| `--input-dir DIR` | Directory holding the four inputs (default `data`). |
+| `--events`, `--accounts`, `--plans`, `--period` | Path to one input; overrides `--input-dir` for that file. |
+| `--out DIR` | Output directory (default `out`). |
+| `--json` | Print one machine-readable JSON summary instead of a human line. |
 
-## Optional Excel extension
+Exit codes: `0` success; `2` unusable input or configuration, usage error, I/O
+failure, or an output set that fails `check`; `1` internal inconsistency (the run
+did not reconcile with its own audit trail, so nothing was published).
+Diagnostics go to stderr.
 
-Excel is separate from the assignment's core CLI. Install it explicitly:
+A bad *event* never stops a run — it is quarantined. Bad *configuration* (an
+unknown time zone, a plan without a price in the account's currency, overlapping
+plan segments, a period whose `days_in_period` disagrees with its dates) stops
+the run before anything is written, because every invoice would be suspect.
+
+## Inputs
+
+- **`events.jsonl`** — one JSON object per line:
+  `{"event_id", "ingest_seq", "account_id", "metric", "units", "ts", "ingested_at"}`.
+  `ts` is when the usage happened and `ingested_at` when it was received, both
+  ISO 8601 with an explicit offset.
+- **`accounts.json`** — accounts with an IANA `timezone`, a `currency`, a
+  `credit_minor` and dated `plan_segments` (`[from, to)` local dates).
+- **`plans.json`** — per plan and currency: a full-period `subscription_fee_minor`
+  and, per metric, tiers of `{from_units, to_units, unit_price_micros}`.
+- **`period.json`** — local period start and exclusive end, `days_in_period`,
+  `late_cutoff_hours_after_period_end` and the list of metrics.
+
+## Billing rules, and where each one lives
+
+Each rule is implemented once. The audit check (`rvn-ledger check`) calls the
+same functions, so changing a rule means changing one place plus the tests that
+pin the old behaviour.
+
+| # | Rule | Code |
+|---|---|---|
+| 1 | **Period and timezone.** An event counts if its `ts`, in the account's own time zone, falls in `[period start, period end)`. | `timing.period_bounds`, `timing.classify_time` |
+| 2 | **Deduplication.** Same `event_id` = same event. The first copy by `ingest_seq` wins; later copies are ignored even if their payload differs. | `selection.copy_precedence`, `selection.deduplicate` |
+| 3 | **Late arrivals.** An event ingested more than `late_cutoff_hours_after_period_end` (48) after the account's *local* period end is excluded. | `timing.classify_time` (hours come from `period.json`) |
+| 4 | **Quarantine, never crash.** Missing or non-integer units, unknown metric, unparseable timestamp, units ≤ 0, unknown account, or an unreadable line: recorded with a reason, run continues. | `validation.validate_event` (reason order), `inputs.read_events` (unreadable lines) |
+| 5 | **Subscription.** Charged per plan segment, prorated by whole local days: `round_half_up(fee_minor × days ÷ days_in_period)`. | `subscription.account_subscription`, `money.subscription_amount` |
+| 6 | **Usage tiers.** Priced on the plan in effect at period end; tiers are cumulative over the whole period, each bracket is `[from, to)`, each tier is its own line. | `subscription.account_subscription` (period-end plan), `tiers.split_units` |
+| 7 | **Money.** Integer minor units only. Each line is `round_half_up(units × unit_price_micros ÷ 10000)`; the subtotal is the sum of already-rounded lines. | `money.usage_amount`, `money.round_half_up` |
+| 8 | **Credits.** Applied after the subtotal, capped at it; a total is never negative; unused credit is reported as `credit_remaining_minor`. | `money.apply_credit` |
+| 9 | **Currency.** Never mixed and never converted. An account with no usage still gets a subscription-only invoice. | `subscription._fee`, `tiers.metric_tiers` (prices must exist in the account's currency) |
+
+Checks run in this order for every event line: **parse → deduplicate → validate
+(quarantine) → period → late → bill**. Deduplication comes first so a later
+"fixed" copy can never replace the first copy; validation comes before the time
+checks because a period cannot be evaluated for an unknown account or an
+unreadable timestamp. [ENGINEERING.md](ENGINEERING.md) explains each choice.
+
+## Outputs
+
+| File | Contents |
+|---|---|
+| `invoices.json` | One invoice per account, sorted by `account_id` (shape below). |
+| `quarantine.json` | `[{"event_id", "reason"}]` in source-line order. |
+| `audit.json` | Every raw line's decision (status, reasons, the winning line for a duplicate, the line's SHA-256) and, per invoice, the plan segments, the tariff used, each line's formula, the source events per metric and the credit arithmetic. |
+| `manifest.json` | Input hashes and sizes, counts per outcome, totals per currency, Python / tzdata / code versions, and output hashes. |
+
+An invoice from the demo — a plan change on the 16th, usage crossing a tier, a
+half-unit storage line rounded up, and a credit of 5:
+
+```json
+{
+  "account_id": "demo-try",
+  "currency": "TRY",
+  "timezone": "Europe/Istanbul",
+  "billable_units": {"api_calls": 12, "storage_gb_hours": 5},
+  "lines": [
+    {"kind": "subscription", "plan_id": "basic", "days": 15, "amount_minor": 45},
+    {"kind": "subscription", "plan_id": "pro", "days": 15, "amount_minor": 60},
+    {"kind": "usage", "metric": "api_calls", "tier_from": 0, "tier_to": 10, "units": 10, "amount_minor": 5},
+    {"kind": "usage", "metric": "api_calls", "tier_from": 10, "tier_to": null, "units": 2, "amount_minor": 3},
+    {"kind": "usage", "metric": "storage_gb_hours", "tier_from": 0, "tier_to": null, "units": 5, "amount_minor": 1}
+  ],
+  "subtotal_minor": 114,
+  "credit_applied_minor": 5,
+  "credit_remaining_minor": 0,
+  "total_minor": 109,
+  "quarantined_count": 1
+}
+```
+
+Every raw line ends in exactly one of `accepted`, `duplicate_ignored`,
+`excluded_out_of_period`, `excluded_late` or `quarantined`; the counts are in
+the manifest and always add up to the number of lines.
+
+**Reproducibility.** Output contains no clock time, random id, host name or
+absolute path, and ordering is explicit everywhere. Identical input bytes with
+the same code and time-zone database give byte-identical outputs; the manifest
+records both so a difference can be explained.
+
+## Tracing a number back to its events
 
 ```sh
-uv tool install --force "rvn-ledger[excel] @ git+https://github.com/efe-arv/rvn-ledger.git@v1.2.0"
+rvn-ledger explain --out out                       # every quarantined record and why
+rvn-ledger explain --out out --event-id ev_123     # one event, including its duplicate copies
+rvn-ledger explain --out out --line 42 --events data/events.jsonl   # one source line, with its original field values
 ```
 
-This adds `openpyxl` and hardened XML parsing. Existing Excel commands remain
-available with the extra; without it they return an actionable error.
-[Excel setup, report export and lossless input transport](docs/EXCEL.md) document
-the workbook contract and limits. JSON remains authoritative.
+For an invoice line, `audit.json` → `invoices.<account>.usage_sources.<metric>`
+lists the accepted events (id, source line, units) that sum to it, and
+`usage_lines` / `subscription_lines` carry the formula that produced each amount.
 
-## Development and verification
+## How correctness is checked
+
+- **`rvn-ledger check`** re-hashes the published files against the manifest and
+  reconciles invoices with the audit trail: dispositions cover every line once,
+  every accepted event is billed exactly once, units are conserved into tiers,
+  subtotal = sum of lines, total = subtotal − credit and never negative, and every
+  amount recomputes from its recorded inputs. `run` performs the same check before
+  it writes anything.
+- **`tests/test_hazards.py`** — one end-to-end test per billing rule and input
+  hazard, small enough to verify by hand. Start here.
+- **`tests/test_invariants.py`** — seeded generated inputs (duplicates, junk,
+  late and out-of-period events) checked against the invariants above, plus
+  duplicate, ordering and cross-account independence.
+- **`tests/fixtures.py`** — one hand-derived input set covering every hazard,
+  with its expected invoices and quarantine.
+- **`scripts/e2e.py`** — drives the installed command on the demo from outside
+  the checkout and compares against the hand-derived outputs.
 
 ```sh
-uv sync --extra excel
-uv run --extra excel python -m unittest discover -s tests
-uv run --extra excel python -O -m unittest discover -s tests
+python -m unittest discover -s tests
+python -O -m unittest discover -s tests      # checks are real code, not asserts
+python scripts/e2e.py                        # needs a non-editable install: pip install .
 ```
 
-For the installed-package E2E gate, use a separate non-editable environment:
+CI runs all three on Linux and Windows with Python 3.11 and 3.13.
 
-```sh
-uv venv .e2e-venv
-uv pip install --python .e2e-venv ".[excel]"
-uv run --python .e2e-venv --no-project python scripts/e2e.py
+## Project layout
+
+```text
+src/rvn_ledger/
+  cli.py           run / check / explain
+  pipeline.py      one run: inputs in, four documents out
+  inputs.py        strict JSON parsing; every event line kept with its hash
+  selection.py     deduplication and the one-outcome-per-line classification   (rule 2)
+  validation.py    event field checks and quarantine reasons                    (rule 4)
+  timing.py        local periods and the late cutoff                            (rules 1, 3)
+  subscription.py  plan segments, proration, period-end plan                    (rules 5, 6, 9)
+  tiers.py         tariffs and cumulative bracket splitting                     (rule 6)
+  money.py         rounding, line amounts, credit                               (rules 5, 7, 8)
+  aggregation.py   accepted units per account and metric, with sources
+  invoice.py       invoice assembly in the output shape
+  audit.py         audit trail and its reconciliation
+  outputs.py       deterministic JSON and staged publication
+  diagnostics.py   explain
+examples/demo/     a hand-checked synthetic month
+scripts/           e2e.py, benchmark.py
+docs/history/      working notes from development review rounds
 ```
 
-CI also tests a base installation without Excel, validates release metadata,
-and runs the suite normally and under `-O` on Windows/Linux and Python 3.11/3.13.
-The E2E gate compares hand-derived invoices, reruns billing, checks diagnostics,
-performs the full Excel round trip and rejects tampered outputs.
+## Branches
 
-The legacy `uv run python cli.py run --input-dir data --out out --json` remains
-available. Private inputs and outputs are deliberately excluded from Git.
-No license or rights to third-party assignment material are asserted.
+- **`main`** — the command-line tool described here.
+- **`feature/excel`** — optional Excel support: a checked report workbook and a
+  lossless input-workbook export/import (`pip install ".[excel]"`).
+- **`feature/independent-verifiers`** — standalone scripts that re-derive every
+  line's status, the subscriptions, the aggregation and the invoices from the raw
+  inputs without using the billing modules, and write hashed receipts.
 
-See [engineering decisions and measured scaling](ENGINEERING.md),
-[model-use boundaries](MODEL_USE.md), and the [changelog](CHANGELOG.md).
+## Further reading
+
+- [ENGINEERING.md](ENGINEERING.md) — invariants, check precedence, and what changes at 1000× the volume.
+- [MODEL_USE.md](MODEL_USE.md) — where a language model belongs in a system like this, and where it does not.
+- [CHANGELOG.md](CHANGELOG.md)

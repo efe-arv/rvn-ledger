@@ -1,4 +1,5 @@
 import unittest
+
 from rvn_ledger import money
 class MoneyTests(unittest.TestCase):
     def test_half_up_boundaries(self):
