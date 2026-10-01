@@ -157,6 +157,22 @@ give byte-identical outputs. The manifest records these prerequisites so a
 difference can be explained; changing Python versions changes the manifest even
 when the invoices, quarantine and audit bytes stay identical.
 
+## Excel (this branch)
+
+This branch adds optional Excel support on top of the CLI. JSON stays authoritative.
+
+```sh
+python -m pip install ".[excel]"
+rvn-ledger export --out out --file report.xlsx                        # checked report: invoices, lines, quarantine, sources
+rvn-ledger export --kind inputs --input-dir data --file inputs.xlsx   # lossless input workbook
+rvn-ledger import --file inputs.xlsx --input-dir data-from-excel      # validated back to the four JSON inputs
+```
+
+Without the extra, `export` and `import` exit with an error that names it. Formulas,
+unsupported workbook shapes, unsafe XML and oversized archives are rejected, and
+existing files or directories are never overwritten.
+[docs/EXCEL.md](docs/EXCEL.md) describes the workbook contract and limits.
+
 ## Tracing a number back to its events
 
 ```sh
