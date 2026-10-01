@@ -1,13 +1,16 @@
-# Model use at 1000× scale
+# Model use
 
-The billing path makes no large language model (LLM) calls. This is a proposed auxiliary layer, not an implemented integration: models reduce investigation work, never decide money.
+Nothing below is implemented: the ledger makes no model calls. The line I'd hold: **a model may read what the ledger produces; nothing a model outputs may change an invoice or an event's outcome.**
 
-**Quarantine investigation.** Code groups rejects by deterministic reason, source and available schema version, computes impact, and supplies bounded, redacted examples. Models classify issues, propose root causes and corrections, and prioritize investigation with evidence references and review status. Original rejection reasons remain authoritative. Calibrate confidence against human-reviewed examples, measure per-class errors and coverage, and abstain when evidence is insufficient. Confidence alone never releases records; approved corrections create versioned inputs rerun through deterministic checks.
+**Never on the billing path.** Parsing, deduplication, validation, the period and late checks, proration, tiers, rounding, credits, reconciliation and publishing ([ENGINEERING.md §2](ENGINEERING.md#2-check-precedence)) stay plain code. Each has one correct answer to the cent. A model can't promise byte-identical reruns or an audit trail back to a rule. Event fields are also customer-controlled text, so a model making billing decisions could be steered by instructions hidden in them. The tempting case is the worst: letting a model "repair" a bad record (`"12"` → 12, guessing a timestamp, matching `acct_13` to `acct_013`). That changes money without a rule; the rules say quarantine it.
 
-**Task-specific models.** Benchmark Jev / TypeSafe System One-style models for typed classification, scoring and routing on accuracy, calibration, abstention, latency and cost. Generative models explain evidence and draft remediation requests; embeddings and rerankers retrieve reviewed incidents; statistical or specialist models flag anomalies. Anomalies are investigation signals, not proof of billing errors.
+**Where one helps: the quarantine, at volume.** At 1000× that's about 19,000 records a month.
 
-**Invoice explanations.** Code supplies computed lines, rates, credits, period comparisons and audit references. Every model-generated monetary claim must cite a computed field; missing evidence means an explicit limitation, not an invented cause.
+- *Triage:* code groups records by reason, account and failing field. A typed decision model in the style of Jev (a label from a fixed list plus a probability, never free text) tags each group with a likely cause and owner. Anything low-confidence goes to a person.
+- *Statistics:* code computes the counts and month-over-month changes. A language model writes the summary for the owning team, and every number it writes must match the computed table.
 
-**Scale and boundaries.** Use bounded asynchronous investigation units, queues, budgets and retries; cache by evidence digest, task, prompt and model version. Store identity, evidence and responses separately from invoices. Treat source text as untrusted, grant no write authority, and minimize sensitive data before approved external processing. Provider failure cannot block billing. Measure accuracy, operator time saved and cost before rollout; provenance does not guarantee identical model replay.
+Neither one edits or re-admits a record. Fixes happen upstream, corrected events go through the same run, and billing never waits on either.
 
-Canonical selection, validation, time boundaries, plans, tiers, rounding, credits, reconciliation and publication remain explicit code. Models cannot silently repair inputs or change totals; byte-reproducible billing artifacts stay independent of probabilistic output.
+**Local models only.** Quarantined records are customer usage data, so they never go to an inference provider. Both steps run on open-weight models inside our own environment. For triage that means a self-hosted Jev-style model such as [Kev](https://github.com/jaredpalmer/kev), retrained and calibrated on our own human-labelled quarantine history. Weights are pinned by hash and recorded with every label, just as the manifest records code and tzdata.
+
+**Or none at all.** At today's 19 quarantined records, `rvn-ledger explain` and a person are enough, so a no-model answer is just as defensible. Volume decides whether the advisory side is worth it; the line doesn't move.
