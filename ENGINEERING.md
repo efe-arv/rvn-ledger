@@ -1,196 +1,176 @@
-# Engineering decisions
-
-## 1. Scope and design
-
-This ledger converts four local input files into exact, reproducible invoices, a quarantine report, and an auditable run manifest. The billing specification and the output contract in `period.json` are authoritative. The implementation does not infer pricing policy, repair records silently, or approximate monetary results.
-
-The core is a deterministic batch pipeline:
-
-```text
-Reference-data validation
-    → strict event parsing and canonical-copy selection
-    → event validation and account-local time filtering
-    → usage aggregation and subscription segmentation
-    → cumulative tier pricing and line-level rounding
-    → capped credit application
-    → audit reconciliation and staged publication
-```
-
-The stages are separated into small Python modules so that money, time boundaries, record selection, and publication can be tested independently. The billing path makes no network or large language model (LLM) calls. Authentication, a database, a user interface, and hosted deployment are unnecessary for the assignment.
-
-The packaged CLI adds installation and diagnostics around this core. Excel transport is a separate, optional `[excel]` extension with its own dependency group and documentation. The assignment's 5–6 hour scope is the core CLI, correctness, audit and focused tests; spreadsheet convenience is follow-on work. The JSON inputs and validated JSON output set remain authoritative.
-
-A frozen `BillingContext` resolves metric order, account bounds, subscription segments, credits and period-end tariffs once. Read-only mappings and frozen values prevent later changes to raw configuration from changing that context. The pipeline classifies once and aggregates once; invoice construction and the audit consume the same totals and source references. Compatibility helpers remain available for focused tests and verifier scripts.
-
-## 2. Invariants
-
-### Exact money, with rounding at the specified boundary
-
-Monetary amounts are nonnegative Python integers in minor currency units. Booleans are rejected even though Python treats them as integers. Floating-point values are not accepted as amounts, and output serialization rejects floats anywhere in the documents.
-
-The JSON parser admits integers of at most 256 decimal digits, excluding the minus sign. This explicit resource bound leaves arithmetic headroom: two admitted magnitudes need at most 512 digits when multiplied, and a realizable batch's aggregate count adds far fewer than the remaining 128 digits below Python's minimum configurable 640-digit conversion limit. The process-wide interpreter limit is never disabled. Oversized event integers become `integer_too_large`; oversized reference data raises an input error before publication. Identity-only recovery applies the same bound, preserving canonical selection when the event ID and sequence are readable. Boundary tests exercise maximal prices and accumulated usage with `PYTHONINTMAXSTRDIGITS=640`.
-
-For a nonnegative integer numerator `n` and a positive integer denominator `d`, half-up rounding is computed without floating-point division:
-
-```text
-round_half_up(n, d) = (2 × n + d) // (2 × d)
-
-subscription line = round_half_up(fee_minor × local_days, days_in_period)
-usage line        = round_half_up(units × unit_price_micros, 10000)
-subtotal_minor    = sum(already-rounded line amounts)
-credit_applied    = min(subtotal_minor, credit_minor)
-total_minor       = subtotal_minor − credit_applied
-credit_remaining  = credit_minor − credit_applied
-```
-
-Rounding the combined unrounded charges would implement a different pricing rule. Two half-minor-unit lines must each round up; their subtotal must not be obtained by rounding their combined value once. Credits cannot make the invoice negative, and increasing a credit cannot increase the payable total.
-
-Currency is part of the pricing lookup, not a display label. Fees and tariffs are selected in the account's currency; missing required currency or metric pricing fails the run. Cross-account summaries remain separated by currency. There is no exchange-rate conversion.
-
-### Every source line has exactly one disposition
-
-Every physical event line, including an unreadable or malformed line, receives exactly one terminal status:
-
-- `accepted`
-- `duplicate_ignored`
-- `excluded_out_of_period`
-- `excluded_late`
-- `quarantined`
-
-Their counts sum to the raw line count. Assigning two statuses to a line, or leaving a line unclassified, is an internal error rather than a silent overwrite.
-
-For a repeated `event_id`, the smallest `ingest_seq` selects the canonical copy. Business validity does not influence that selection. A later valid copy cannot repair an invalid canonical copy. Rejected JSON can participate in deduplication only when its top-level identity and sequence can be recovered unambiguously; recovery does not make the payload valid.
-
-Every accepted event contributes to exactly one account-and-metric usage aggregate. Its units are conserved through aggregation and cumulative tier allocation. Duplicate, excluded, and quarantined records contribute no billable units.
-
-### Local dates and elapsed time are different concepts
-
-Each account's billing interval is half-open: `[local_start, local_end)`. Local-midnight boundaries are resolved with the account's IANA time zone and then compared as UTC instants. A timestamp exactly at the start is eligible; one exactly at the end is outside the period.
-
-The lateness cutoff is the account-local period end converted to UTC, plus 48 elapsed hours. Arrival exactly at the cutoff is allowed; arrival after it is excluded. Timestamp fractions are retained as exact rational seconds for boundary comparisons, rather than truncated to `datetime`'s microsecond resolution.
-
-Subscription proration counts whole local calendar days in each clipped plan segment, not elapsed hours divided by 24. Daylight-saving transitions therefore do not change the number of billable calendar days. Usage is priced using the plan covering the final local day of the period; tier consumption is cumulative across the entire period, not reset on plan changes or per event.
-
-An account with no accepted usage still receives its subscription invoice. Host-dependent time-zone aliases are rejected rather than allowing the server's configuration to determine an account's billing interval.
-
-### Reproducibility includes the execution environment
-
-Output ordering is explicit: invoices by account identifier; subscription lines chronologically; usage lines by the configured metric order and tier order; quarantine entries by source line. Serialization is stable and contains no wall-clock timestamp, random identifier, hostname, or absolute source path.
-
-Identical input bytes under the same implementation and recorded runtime/time-zone environment produce byte-identical output. This qualification matters: the manifest records code hashes, Python version, and the resolved time-zone database version. Different code or time-zone data must not be presented as the same reproducibility environment.
-
-### Auditability is stronger than an unexplained total
-
-`audit.json` records source-line decisions, duplicate targets, accepted-event references, subscription segments, and the pricing inputs needed to reconstruct invoice lines. The manifest records input hashes and sizes, output hashes and sizes, disposition counts, currency-separated totals, and implementation/runtime versions.
-
-Internal reconciliation checks arithmetic, unit conservation, tier allocation, source-use uniqueness, and consistency between the invoices and their audit trail. It is not independent authentication of every raw input or tariff. The separate invoice verifier recomputes the supplied-data invoices from raw inputs.
-
-Hashes detect changes relative to an unchanged manifest. They are not signatures: an attacker able to replace the entire output set and its manifest can create a self-consistent replacement.
-
-## 3. Check precedence
-
-Precedence is billing policy. Reordering checks can change which copy wins, which reason is reported, or whether a record is billable.
-
-### Before events: validate reference data
-
-The run validates account identifiers and time zones, period dates, metric definitions, plan segments, required fees and tariffs, and credits before classifying events. Required pricing is checked even for accounts or metrics with no usage.
-
-Invalid reference data stops the run. It cannot be handled as an isolated quarantined event because it makes the interpretation of otherwise valid events unreliable.
-
-### For each event: select first, then validate, then filter
-
-1. **Parse strictly.** Reject invalid UTF-8, invalid JSON, non-object values, repeated keys, non-finite numbers, and unsupported parser-depth or integer-size cases. Preserve a stable parse reason and recover ordering identity only when unambiguous.
-2. **Establish identity.** Require a nonempty string `event_id` and a non-boolean integer `ingest_seq`. A line without usable ordering identity cannot claim an event identifier.
-3. **Select the canonical copy.** Choose the minimum sequence before business validation. Later copies become `duplicate_ignored`, even when their payload would otherwise pass validation.
-4. **Validate the winner.** Collect failures in fixed order: account, metric, units, usage timestamp, ingestion timestamp. The first reason is written to the required quarantine report; the complete ordered list is retained in the audit trail.
-5. **Check the billing period.** A valid winner outside the account-local interval becomes `excluded_out_of_period`.
-6. **Check lateness.** An otherwise eligible winner arriving after the cutoff becomes `excluded_late`.
-7. **Accept and aggregate.** Only records that pass all preceding steps enter billing.
-
-A parse failure with recoverable identity may be a canonical quarantined copy or an ignored later duplicate. It is never accepted merely because identity recovery succeeded. A winner with invalid fields is quarantined before time exclusion; a valid winner that is both out of period and late is classified as out of period.
-
-For each account, calculation then proceeds through subscription segments, period-end-plan usage tiers, per-line rounding, subtotal, capped credit, and final total.
-
-## 4. Explicit assumptions and failure boundaries
-
-- Equal `ingest_seq` values use physical source-line order as the tie-breaker. This resolves an unspecified case deterministically for a fixed input file; it is not claimed as a rule supplied by the assignment. Reordering tied copies can change the winner.
-- Empty usage brackets emit no usage line. Zero-usage accounts still receive subscription invoices.
-- An account's `quarantined_count` includes only quarantined records naming that known account. Unknown-account and unreadable records remain in the global quarantine report.
-- Plan-segment gaps inside the period incur no subscription fee, but a segment must cover the final local day so period-end usage pricing is defined. Overlapping or unusable configuration is rejected.
-- Event quarantine means record, explain, and continue. It does not authorize inferred timestamps, unit coercion, a replacement canonical copy, or automatic correction.
-- Publication uses an exclusive staging directory, staged writes, and manifest-last replacement. Caught replacement errors trigger rollback. This is not a crash-atomic transaction across four files. Consumers must wait for the writer to finish and validate the complete output set; interrupted publication or failed rollback requires recovery, not blind consumption.
-- Excel reports are derived review artifacts. Input workbooks use an explicit lossless schema, not heuristic spreadsheet interpretation. They do not relax event validation or monetary precision requirements.
-
-## 5. Verification strategy
-
-The test suite covers the specified hazards individually and combines them in regression cases. Seeded property tests check conservation and independence properties, including credit monotonicity, duplicate non-interference, and account isolation. File-order invariance applies where canonical-copy ordering is unambiguous; it does not override the documented equal-sequence tie-breaker.
-
-The committed synthetic demo has hand-derived complete expected invoices and quarantine entries. CI installs the wheel through pip, changes the command's working directory outside the checkout, and exercises `run → check → explain → export → import → run`. It compares full expected invoice objects, repeated output bytes, reconstructed input bytes and post-import billing output bytes. A separate base-install step proves the core works without Excel and that optional commands explain the missing extra. Tag, package, CLI, manifest and README versions are checked together.
-
-Correctness checks use explicit runtime validation, not Python `assert` statements that disappear under optimization. The suite is also exercised with optimized Python execution. Repeated runs and differing host time-zone settings check that ambient host settings do not change the output for a fixed billing environment.
-
-Independent raw-input recomputation complements internal reconciliation. Regression tests specifically cover hazards found during review, including sub-microsecond cutoff violations and malformed Unicode identifiers that previously threatened publication. A correct result on the supplied data is not sufficient evidence that those boundary cases are correct.
-
-The assignment's hidden reference invoices are unavailable. Local verification demonstrates the implemented rules and observed cases; it does not claim that the evaluator's private comparison has been run.
-
-## 6. What changes at 1000× volume
-
-The current implementation materializes inputs, parsed records, classifications, source references, and serialized output in memory. This is a deliberate simplicity trade-off for the supplied batch, not a claim of bounded-memory streaming.
-
-The current measurements below show approximately linear growth in retained Python memory. At 1000× volume, retained per-event state and the audit trail are the first targets for a bounded-memory implementation. Stage-level profiling would separate parsing, canonical selection, audit construction, serialization and I/O before changing the algorithm. The billing rules, precedence, integer arithmetic and traceability requirements remain unchanged.
-
-### Measured batch sizes
-
-Measured on Windows 11, CPython 3.12.14, rvn-ledger 1.2.0 and tzdata 2026.4.
-Each size has three samples, each in a fresh process. The synthetic workload
-has two accounts/currencies, two metrics and unique, valid, accepted events.
-The baseline is 1,000 synthetic events, not a multiplication of the private
-1,078-line assignment file.
-
-| Scale | Events | Median seconds | Maximum peak Python allocations (MiB) |
-|---|---:|---:|---:|
-| 1× | 1,000 | 0.268 | 2.565 |
-| 10× | 10,000 | 2.321 | 21.656 |
-| 100× | 100,000 | 22.765 | 215.610 |
-
-The timed command reads inputs, bills, reconciles, publishes and checks the
-output set. Timing includes `tracemalloc` overhead and excludes interpreter
-startup. Memory is peak traced Python allocation, not process RSS; native/OS
-allocations and filesystem cache are excluded. Host load and file caching are
-not controlled. These are local observations, not latency guarantees.
-**1,000× has not been measured.**
-
-[Raw samples and installed-source hashes](docs/benchmark-results.json) record
-the measurement environment. Reproduce from a non-editable installation:
-
-```sh
-python scripts/benchmark.py --scales 1 10 100 --base-events 1000 --repeats 3 --json benchmark-results.json
-```
-
-The benchmark is opt-in and uses only generated synthetic data. The growth
-observed at 100× motivates the following two-pass selection and streamed-audit
-design before claiming million-event capacity.
-
-### Bound memory without changing canonical-copy semantics
-
-Use an immutable, hashed input snapshot and two passes over it. The first pass selects the minimum `(ingest_seq, source_line)` for each globally unique event identifier, applying the same strict parsing and identity-recovery rules. The second pass classifies against those winners and folds accepted units into account-and-metric totals.
-
-This requires `O(unique event identifiers)` selection state plus account/metric aggregates. It is not `O(accounts × metrics)` overall. If the winner index does not fit comfortably in memory, use external sorting or a disk-backed temporary index. Keep original source-line references and verify both passes read the same snapshot.
-
-### Stream the audit, not just the amounts
-
-Write disposition records and accepted-source references to deterministic audit shards rather than retaining every event object. Keep aggregate pricing state in memory, with stable offsets or content hashes linking invoice lines to their source records. An account's accepted events are not necessarily contiguous in the original input, so a single source-file range is insufficient unless references are explicitly grouped during spooling.
-
-Full traceability still has linear storage cost. Streaming reduces the working set; it does not eliminate the evidence.
-
-### Partition after global deduplication
-
-Partitioning raw events by account would be wrong: conflicting copies of the same event identifier may name different accounts. Select the global canonical copy first, or partition the selection phase by event identifier. Then route accepted winners to account shards for independent billing.
-
-Merge invoices by account identifier and restore source-line order for the required quarantine output. Worker completion order must not affect serialization. Shard manifests should bind inputs, code, time-zone data, and output hashes so resumed work cannot mix execution environments.
-
-### Publish complete generations
-
-If crash-safe resumability becomes necessary, replace the flat-file publication protocol with immutable run-generation directories and a small atomic completion pointer, using appropriate filesystem durability handling. Publish a generation only after every shard and the final merged outputs reconcile. Readers must never combine files from different generations.
-
-A million-event monthly batch does not, by itself, justify a service, message queue, or permanent database. I would add those only for demonstrated requirements such as concurrent ingestion, incremental billing, or operational recovery. The first scaling step is a measured, disk-assisted batch implementation, not a distributed rewrite.
+# Engineering notes
+
+This document answers three questions: which invariants the ledger keeps, the
+order in which it checks things, and what would change at 1000× the volume. It
+then lists the assumptions made where the rules are silent, and what was left
+out. The billing rules themselves, and the module that implements each one,
+are in the [README](README.md#billing-rules-and-where-each-one-lives).
+
+## 1. Invariants
+
+| # | Invariant | Enforced by | Tested by |
+|---|---|---|---|
+| 1 | Money is integer minor units everywhere. No float is accepted as an amount or written to any output. | `money.py` rejects non-integers, booleans and negatives; `outputs.serialize` refuses floats | `test_money`, `test_outputs`, `test_hazards` (rule 7) |
+| 2 | Rounding happens once per line, half up; the subtotal is the sum of already-rounded lines. | `money.round_half_up`, `money.usage_amount`, `money.subscription_amount` | `test_money`, `test_hazards` (rules 5, 7) |
+| 3 | `total = subtotal − credit_applied`, never negative; `credit_applied + credit_remaining = credit`; more credit never raises a total. | `money.apply_credit`, re-checked by `audit.reconcile` | `test_invariants`, `test_hazards` (rule 8) |
+| 4 | Every raw line ends in exactly one outcome — `accepted`, `duplicate_ignored`, `excluded_out_of_period`, `excluded_late` or `quarantined` — and the counts add up to the number of lines. | `selection` raises on a missing or second outcome; `audit.reconcile` | `test_selection`, `test_invariants` |
+| 5 | Every accepted event is billed exactly once, and units are conserved: accepted units = `billable_units` = units across the tier lines. | `aggregation`; `audit.reconcile` checks each source is used once | `test_audit`, `test_invariants` |
+| 6 | A later duplicate, the order of lines in the file, or another account's events never change an invoice. | `selection.copy_precedence` orders by `ingest_seq`, not arrival; aggregation is per account | `test_invariants` (seeded generated inputs) |
+| 7 | Currencies never mix and are never converted: every fee and tariff is looked up in the account's currency; totals are kept per currency. | `subscription`, `tiers.metric_tiers`; `totals_by_currency` in the manifest | `test_invoice`, `test_hazards` (rule 9) |
+| 8 | Periods are half-open in local time; the late cutoff is the local period end plus elapsed hours; proration counts local calendar days, so DST cannot add or remove a day. | `timing.period_bounds`, `timing.classify_time`, `subscription` | `test_timing`, `test_subscription`, `test_hazards` (rules 1, 3, 5) |
+| 9 | Same input bytes + same code + same time-zone database → byte-identical outputs. No clock time, random id, host name or absolute path is written; every ordering is explicit. | `outputs.serialize`, `pipeline` (the manifest records input hashes, code hashes, Python and tzdata versions) | `test_pipeline` (reruns from another working directory and `TZ`), `test_invariants`, `test_outputs` |
+| 10 | Every invoice line traces back to its events and its formula, and the outputs reconcile with that trail before anything is written. | `audit.build_audit`, `audit.reconcile` | `test_audit` |
+| 11 | A bad event never stops a run; bad configuration always does, before any output exists. | `inputs` and `validation` (events) vs `context.prepare_context` (configuration) | `test_pipeline`, `test_hazards` (rule 4) |
+
+**How they hold at runtime.** `rvn-ledger run` calls `audit.reconcile` before
+publishing. It checks invariants 3, 4, 5 and 10 and recomputes every line from
+the recorded inputs (fee, days, tariff, credit) through the same `money` and
+`tiers` functions that built the invoice. Any mismatch exits with code 1 and
+writes nothing. `rvn-ledger check` repeats the reconciliation on published
+files and verifies their hashes against the manifest. The checks are ordinary
+code, not `assert`s, so they still run under `python -O`.
+
+## 2. Check precedence
+
+**Configuration first.** Accounts (ids, IANA time zones, credits), the period
+(its dates must agree with `days_in_period`) and plans (a fee for every plan an
+account uses and a tariff for every metric on its period-end plan, all in the
+account's currency) are validated before a single event is read. A
+configuration error stops the run: it would make every invoice suspect, and it
+cannot be quarantined line by line.
+
+**Then each event line, in this order:**
+
+1. **Parse.** Invalid UTF-8 or JSON, a value that is not an object, or repeated
+   keys → quarantined (`invalid_utf8`, `invalid_json`, `not_object`, …). If the
+   line's `event_id` and `ingest_seq` can still be read unambiguously, it keeps
+   its place in step 3, so a later valid copy cannot replace it.
+2. **Identity.** A non-empty string `event_id` and an integer `ingest_seq` are
+   required; without them a line cannot be deduplicated → quarantined
+   (`invalid_event_id`, `invalid_ingest_seq`).
+3. **Deduplicate.** Among copies of one `event_id`, the lowest `ingest_seq`
+   wins; the rest become `duplicate_ignored`. This runs *before* validation
+   because rule 2 says the first copy wins "even if the payload differs": a
+   later, valid-looking copy must not replace a broken first one, and validity
+   must not influence which copy is chosen.
+4. **Validate the winner.** Reasons are collected in a fixed order:
+   `unknown_account`, `unknown_metric`, `invalid_units`, `nonpositive_units`,
+   `invalid_ts`, `invalid_ingested_at`. All of them go to `audit.json`; the first
+   goes to `quarantine.json`. This runs before the time checks because the
+   period depends on the account's time zone and a readable `ts`.
+5. **Period.** `ts` outside the account's local `[start, end)` →
+   `excluded_out_of_period`.
+6. **Late.** `ingested_at` more than `late_cutoff_hours_after_period_end` (48)
+   hours after the account's local period end → `excluded_late`. Period comes
+   first, so an event that is both is reported as out of period; neither is
+   billed, only the label differs.
+7. **Accept** and add the units to the account and metric.
+
+**Then each account:** subscription segments → usage priced on the period-end
+plan, split over cumulative tiers → each line rounded → subtotal → credit →
+total.
+
+## 3. What changes at 1000× the volume
+
+The supplied month has 1,078 events, so 1000× is about one million. That was
+measured rather than estimated (`scripts/benchmark.py`, results in
+[docs/benchmark-results.json](docs/benchmark-results.json); Windows 11,
+CPython 3.12, synthetic valid events for two accounts, full `run` including
+reconciliation, publishing and the post-publish check):
+
+| Scale | Events | Time (median of 3) | Per event | Peak Python memory | Output on disk |
+|---|---:|---:|---:|---:|---:|
+| 1× | 1,000 | 0.08 s | 78 µs | 3 MiB | 0.3 MiB |
+| 10× | 10,000 | 0.54 s | 54 µs | 22 MiB | 2.9 MiB |
+| 100× | 100,000 | 5.4 s | 54 µs | 216 MiB | 29 MiB |
+| 1000× | 1,000,000 | 78 s | 78 µs | 2.1 GiB | 296 MiB |
+
+Peak memory is Python allocations under `tracemalloc`, from a separate traced
+run so tracing does not slow the timed ones. As process memory (peak working
+set), the 1000× run used 2.5 GiB of RAM for a 170 MiB input file; almost all of
+the 296 MiB output is `audit.json`. The 1× per-event figure is mostly fixed
+start-up cost.
+
+**What this says.** A million events a month is still a single-machine batch
+job, and 78 seconds is not a problem for monthly billing. Memory is: every line,
+parsed event and decision is held at once, the per-event cost rises at 1000×
+(54 → 78 µs) as the process carries ~2 GiB of live objects, and 10,000× would
+not fit. So the first change is bounded memory, not a distributed system.
+
+**Where the time goes**, as approximate shares from profiling a 100,000-event
+run: reading and strict parsing about a third, two-thirds of that being the
+check for unpaired surrogates in every string; classification about 30%, mostly
+parsing timestamps into exact fractions; writing the indented JSON outputs
+about a quarter; reconciliation about 13% (it runs before publishing and again
+in the post-publish check). Deduplication, aggregation and pricing are each
+under 2%.
+
+**What I would change, in order:**
+
+1. **Two passes over the file instead of loading it.** Pass 1 keeps only the
+   winning copy per `event_id` (`event_id → (ingest_seq, line)`). Pass 2 reads
+   again, classifies each line against the winners and adds accepted units into
+   per-account, per-metric totals. Memory becomes proportional to distinct event
+   ids plus accounts × metrics. If the id index outgrows memory, sort by
+   `event_id` on disk or use a disk-backed index; the result is the same.
+2. **Write the audit as it streams.** One decision per line appended to a JSONL
+   file in source order, with invoice lines pointing at source line numbers.
+   Full traceability still costs storage proportional to the input; it just
+   leaves memory.
+3. **Cheaper per-event checks, same results.** Check for surrogates only in the
+   fields that are read; parse timestamps into integer seconds and nanoseconds
+   instead of fractions; write `audit.json` compactly; reconcile once and let
+   `check` rely on the hashes plus a streaming reconciliation. The byte-identical
+   and hand-verified tests guard each of these.
+4. **Parallelise only after global deduplication.** Splitting raw events by
+   account is wrong: copies of one `event_id` can name different accounts (the
+   demo has one), so the winner must be chosen globally first. Shard the
+   deduplication by `hash(event_id)`, then route winners to account shards for
+   pricing. A single very large account can be split by metric, because totals
+   only add. Merge invoices sorted by `account_id` so worker order never shows
+   in the output.
+5. **Operate it as a scheduled close.** A month can only be closed after the
+   last account's late cutoff (the New York accounts here: local period end +
+   48 h). Earlier runs are safe as provisional invoices because reruns are
+   idempotent. At the supplied quarantine rate (19 of 1,078, about 1.8%),
+   1000× means roughly 19,000 quarantined records a month, which needs triage
+   grouped by reason and source rather than reading `quarantine.json` by hand
+   (see [MODEL_USE.md](MODEL_USE.md)). Each run keeps its manifest binding
+   inputs, code and time-zone data, so any rerun can be explained.
+
+**What I would not add for 1000×:** a database, a queue or a service. A million
+events a month does not need them; continuous ingestion or incremental
+billing would, and that is a different product decision.
+
+## 4. Assumptions
+
+Where the rules are silent, the ledger makes these choices, and each one is
+pinned by a test:
+
+- **Equal `ingest_seq`** for two copies of one event: the earlier line in the file wins.
+- **A broken first copy stays broken.** If the winning copy is invalid it is quarantined; a later valid copy is still a duplicate.
+- **Late and out-of-period events are excluded, not quarantined.** `quarantine.json` only holds records that are unreadable or fail a rule-4 check.
+- **Exactly 48 hours after the period end is on time.** Only "more than 48 hours" is late.
+- **`quarantined_count`** counts quarantined records that name that account. Records for unknown accounts, and unreadable lines, belong to no invoice and appear only in `quarantine.json`.
+- **Units must be a JSON integer**: `1.0`, `"5"` and `true` are `invalid_units`.
+- **Timestamps need seconds and an explicit offset** (`Z` or `±HH:MM`); anything else is `invalid_ts` / `invalid_ingested_at`.
+- **Tiers with no units produce no line**; an account with no usage gets subscription lines only.
+- **The period-end plan** is the segment covering the last local day of the period; a segment starting on the exclusive end date does not count. If no segment covers that day, the configuration is rejected.
+- **Days covered by no plan segment are not charged.** Overlapping segments are rejected.
+- **A missing `credit_minor` is an error**, not zero.
+- **JSON integers are limited to 256 digits.** Larger values in an event quarantine it (`integer_too_large`); in configuration they stop the run.
+
+## 5. What was cut
+
+- **Bounded memory.** The whole month is held in memory. That is fine up to the
+  volumes measured above; section 3 describes the change for more.
+- **Crash-safe publishing.** Outputs are staged and swapped in, with rollback
+  on errors, but a power loss mid-write is only detected (by `check` and the
+  staging directory), not prevented.
+- **Signatures.** Manifest hashes detect changes; they do not prove who produced a file.
+- **Incremental billing, corrections and quarantine resolution.** Each run bills
+  one closed period from scratch; there is no workflow for fixing and
+  re-admitting quarantined records.
+- **Kept off `main`:** Excel import/export (`feature/excel`) and standalone
+  scripts that re-derive every result from the raw inputs
+  (`feature/independent-verifiers`). Both work; neither is needed to bill.
