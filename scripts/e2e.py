@@ -1,4 +1,7 @@
-"""Exercise an installed console command against hand-derived synthetic outputs."""
+"""End-to-end check of the INSTALLED console command against the hand-derived demo outputs.
+
+Run from a non-editable install: run, check, rerun (byte-identical), explain, and tamper detection.
+"""
 import argparse
 import hashlib
 from importlib.metadata import version
@@ -27,7 +30,7 @@ def snapshot(directory):
     return {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in OUTPUTS}
 
 
-def exercise(cli, directory, core_only):
+def exercise(cli, directory):
     """Run the whole user workflow from outside the checkout."""
     calls = []
 
@@ -62,46 +65,20 @@ def exercise(cli, directory, core_only):
     copies = invoke('explain', '--out', out, '--event-id', 'api-first')['records']
     require(len(copies) == 2 and copies[1]['canonical_line'] == 1, 'global canonical selection changed')
 
-    report, workbook = directory / 'report.xlsx', directory / 'inputs.xlsx'
-    if core_only:
-        require(find_spec('openpyxl') is None and find_spec('defusedxml') is None,
-                'core-only E2E requires an environment without the Excel extra')
-        rejected = invoke('export', '--out', out, '--file', report, expected=2)
-        require('rvn-ledger[excel]' in rejected.stderr and not report.exists(), 'missing-extra error is not actionable')
-        rejected = invoke('import', '--file', workbook, '--input-dir', directory / 'unavailable', expected=2)
-        require('rvn-ledger[excel]' in rejected.stderr, 'import does not explain the missing extra')
-    else:
-        invoke('export', '--out', out, '--file', report)
-        invoke('export', '--kind', 'inputs', '--input-dir', data, '--file', workbook)
-        imported = directory / 'imported'
-        invoke('import', '--file', workbook, '--input-dir', imported)
-        require(all((data / name).read_bytes() == (imported / name).read_bytes() for name in INPUTS),
-                'Excel transport changed input bytes')
-        other = directory / 'imported-out'
-        invoke('run', '--input-dir', imported, '--out', other)
-        invoke('check', '--out', other)
-        require(snapshot(other) == original, 'Excel transport changed billing outputs')
-        report_hash = hashlib.sha256(report.read_bytes()).hexdigest()
-        invoke('export', '--out', out, '--file', report, expected=2)
-        require(hashlib.sha256(report.read_bytes()).hexdigest() == report_hash, 'existing report was overwritten')
-        invoke('import', '--file', report, '--input-dir', directory / 'invalid', expected=2)
-        require(not (directory / 'invalid').exists(), 'rejected report created an import destination')
     (out / 'invoices.json').write_bytes(b'[]\n')
     invoke('check', '--out', out, expected=2)
     invoke('explain', '--out', out, expected=2)
-    return {'version': version('rvn-ledger'), 'mode': 'core' if core_only else 'excel',
-            'calls': calls, 'output_sha256': original, 'result': 'OK'}
+    return {'version': version('rvn-ledger'), 'calls': calls, 'output_sha256': original, 'result': 'OK'}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--core-only', action='store_true')
     parser.add_argument('--cli', type=Path, default=Path(sysconfig.get_path('scripts')) / ('rvn-ledger.exe' if os.name == 'nt' else 'rvn-ledger'))
     args = parser.parse_args()
     location = Path(find_spec('rvn_ledger').origin).resolve()
     require(not location.is_relative_to(ROOT / 'src'), 'install the package non-editably before E2E')
     with tempfile.TemporaryDirectory(prefix='rvn-ledger-e2e-') as tmp:
-        result = exercise(args.cli.resolve(), Path(tmp), args.core_only)
+        result = exercise(args.cli.resolve(), Path(tmp))
     print(json.dumps(result, indent=2))
 
 

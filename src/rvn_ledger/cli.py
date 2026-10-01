@@ -1,8 +1,11 @@
 """Ledger command line: read the four inputs, write invoices.json, quarantine.json, audit.json and manifest.json.
 
-    python3 cli.py run --input-dir DIR --out OUT
-    python3 cli.py run --events E --accounts A --plans P --period R --out OUT
-    python3 cli.py check --out OUT
+    rvn-ledger run --input-dir DIR --out OUT
+    rvn-ledger run --events E --accounts A --plans P --period R --out OUT
+    rvn-ledger check --out OUT
+    rvn-ledger explain --out OUT [--event-id ID | --line N] [--events events.jsonl]
+
+(`python -m rvn_ledger ...` is equivalent.)
 
 Exit codes: 0 success; 2 usage error, unusable input/configuration, publication/I/O failure, or a published set
 that fails its check; 1 an internal inconsistency (the run did not reconcile with its
@@ -12,8 +15,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-
-
 
 from .audit import AuditError, reconcile  # noqa: E402
 from .inputs import InputError  # noqa: E402
@@ -51,16 +52,7 @@ def parse_args(argv):
     selection.add_argument('--event-id', help='exact event identifier; includes its duplicate copies')
     selection.add_argument('--line', type=int, help='physical events.jsonl line number (1-based)')
     diagnostic.add_argument('--events', type=Path, help='optional original events.jsonl; values shown only after hash match')
-    export = commands.add_parser('export', help='export a checked report or lossless input workbook to Excel')
-    export.add_argument('--format', choices=['xlsx'], default='xlsx')
-    export.add_argument('--kind', choices=['report', 'inputs'], default='report', help='report cannot be imported; inputs uses the explicit v1 transport schema')
-    export.add_argument('--out', type=Path, default=Path('out'), help='checked output set for report export')
-    export.add_argument('--input-dir', type=Path, default=Path('data'), help='four input files for --kind inputs')
-    export.add_argument('--file', type=Path, required=True, help='new XLSX file; existing files are never overwritten')
-    importer = commands.add_parser('import', help='validate an input workbook and write the four inputs to a NEW directory')
-    importer.add_argument('--file', type=Path, required=True)
-    importer.add_argument('--input-dir', type=Path, required=True, help='NEW destination directory; existing directories are never overwritten')
-    for command in (run, check, diagnostic, export, importer):
+    for command in (run, check, diagnostic):
         command.add_argument('--json', action='store_true', help='machine-readable summary')
     argv = [{' -help': '--help', '-help': '--help', '-run': 'run', '-check': 'check'}.get(a, a) for a in argv]
     return parser.parse_args(argv)
@@ -128,68 +120,10 @@ def command_explain(args):
     return _summary(args, result, '\n'.join(lines) if lines else 'OK: no quarantined records')
 
 
-def _excel_support():
-    try:
-        from . import excel
-    except ModuleNotFoundError as exc:
-        if exc.name.split('.')[0] not in ('openpyxl', 'defusedxml', 'et_xmlfile'):
-            raise
-        raise InputError('Excel support is optional; install rvn-ledger[excel] using the Excel setup in README.md') from exc
-    return excel
-
-
-def command_export(args):
-    excel = _excel_support()
-    from .diagnostics import load_verified
-    if args.kind == 'inputs':
-        raw = {name: (args.input_dir / name).read_bytes() for name in INPUT_NAMES}
-        # Inputs intended for editing may contain bad events, but configuration must be usable.
-        result = run_ledger(raw)
-        reconcile(result.invoices, result.quarantine, result.audit, result.manifest)
-        excel.export_inputs(raw, args.file)
-    else:
-        excel.export_report(load_verified(args.out), args.file)
-    return _summary(args, {'file': str(args.file), 'kind': args.kind, 'result': 'OK'}, f'OK: {args.kind} workbook -> {args.file}')
-
-
-def command_import(args):
-    import os
-    import shutil
-    import tempfile
-    raw = _excel_support().import_inputs(args.file)
-    result = run_ledger(raw)
-    reconcile(result.invoices, result.quarantine, result.audit, result.manifest)
-    target = args.input_dir
-    if target.exists() or target.is_symlink():
-        raise InputError('import destination exists; choose a NEW --input-dir')
-    target.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix='.ledger-import-', dir=target.parent))
-    acquired = False
-    try:
-        for name, data in raw.items():
-            with open(staging / name, 'xb') as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-        target.mkdir()  # Exclusive claim: never replace another directory, even after a race.
-        acquired = True
-        for name in INPUT_NAMES:
-            os.replace(staging / name, target / name)
-    except BaseException:
-        if acquired:
-            shutil.rmtree(target)
-        raise
-    finally:
-        shutil.rmtree(staging)
-    return _summary(args, {'input_dir': str(target), 'result': 'OK', 'counts': result.manifest['counts']},
-                    f"OK: input workbook validated; {result.manifest['counts']['quarantine_entries']} quarantined events retained -> {target}")
-
-
 def main(argv=None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        return {'run': command_run, 'check': command_check, 'explain': command_explain,
-                'export': command_export, 'import': command_import}[args.command](args)
+        return {'run': command_run, 'check': command_check, 'explain': command_explain}[args.command](args)
     except InputError as exc:
         human_display(f'error: {exc}', file=sys.stderr)
         return 2
@@ -197,7 +131,7 @@ def main(argv=None) -> int:
         human_display(f'{"check failed" if args.command == "check" else "publication failed"}: {exc}', file=sys.stderr)
         return 2
     except AuditError as exc:
-        if args.command in ('check', 'explain') or (args.command == 'export' and args.kind == 'report'):
+        if args.command in ('check', 'explain'):
             human_display(f'check failed: {exc}', file=sys.stderr)
             return 2
         human_display(f'internal error: run did not reconcile, nothing published: {exc}', file=sys.stderr)
