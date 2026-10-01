@@ -3,6 +3,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from fixtures import ROOT, run_cli, run_fixture
 
 
 class SerializationTests(unittest.TestCase):
@@ -23,6 +26,13 @@ class SerializationTests(unittest.TestCase):
         for bad in ([float('nan')], [float('inf')], [{'a': {1, 2}}], [b'x'], [1.5]):
             with self.subTest(bad=bad), self.assertRaises((ValueError, TypeError)):
                 serialize(bad)
+
+    def test_serialization_preserves_invalid_identity_without_utf8_crash(self):
+        from rvn_ledger.outputs import serialize
+        document = {'id': '\ud800', 'normal': 'ş😀', '\udfff': ['\ud800']}
+        encoded = serialize(document)
+        self.assertEqual(json.loads(encoded.decode('utf-8')), document)
+        self.assertIn('ş😀'.encode(), encoded)
 
 
 class PublishTests(unittest.TestCase):
@@ -69,8 +79,7 @@ class PublishTests(unittest.TestCase):
     def test_failure_while_moving_files_into_place_is_detectable(self):
         # A caught replacement failure restores the previous complete set.
         # Abrupt process/power failure is separately documented as fail-closed, not atomic.
-        from unittest.mock import patch
-        from rvn_ledger.outputs import OutputError, check_outputs, publish
+        from rvn_ledger.outputs import check_outputs, publish
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
             publish(out, self.files(), {'counts': {'raw': 0}})
@@ -117,3 +126,74 @@ class PublishTests(unittest.TestCase):
             for forbidden in ('timestamp', 'generated_at', 'run_id', 'uuid', 'created'):
                 self.assertNotIn(forbidden, text.lower())
             self.assertNotIn('manifest.json', manifest['outputs'])   # no self-referential hash loop
+
+    def test_malformed_output_metadata_is_controlled_error(self):
+        from rvn_ledger.outputs import OutputError, check_outputs, publish
+        for bad in (None, [], 'bad', 3, {}, {'sha256': 'x', 'bytes': True}):
+            with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
+                publish(tmp, {'invoices.json': b'[]', 'quarantine.json': b'[]', 'audit.json': b'{}'}, {})
+                path = Path(tmp) / 'manifest.json'
+                manifest = json.loads(path.read_bytes())
+                manifest['outputs']['invoices.json'] = bad
+                path.write_text(json.dumps(manifest))
+                with self.assertRaises(OutputError):
+                    check_outputs(tmp)
+                result = run_cli('check', '--out', tmp)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+
+    def test_every_replacement_failure_restores_previous_good_output(self):
+        from rvn_ledger.outputs import check_outputs, publish
+        files = {'invoices.json': b'[]', 'quarantine.json': b'[]', 'audit.json': b'{}'}
+        for fail_at in range(1, 5):
+            with self.subTest(fail_at=fail_at), tempfile.TemporaryDirectory() as tmp:
+                publish(tmp, files, {'counts': {'raw': 0}})
+                before = {p.name: p.read_bytes() for p in Path(tmp).iterdir()}
+                real_replace = os.replace
+                calls = 0
+                def fail_once(src, dst):
+                    nonlocal calls
+                    calls += 1
+                    if calls == fail_at:
+                        raise OSError('injected replace failure')
+                    return real_replace(src, dst)
+                with patch('rvn_ledger.outputs.os.replace', side_effect=fail_once), self.assertRaises(OSError):
+                    publish(tmp, {n: b'[1]' for n in files}, {'counts': {'raw': 1}})
+                self.assertEqual({p.name: p.read_bytes() for p in Path(tmp).iterdir()}, before)
+                check_outputs(tmp)
+
+    def test_actual_manifest_has_no_system_path(self):
+        run = run_fixture()
+        self.assertNotIn('/usr/', json.dumps(run.manifest))
+        self.assertNotIn(str(ROOT), json.dumps(run.manifest))
+
+    def test_staging_directory_blocks_publish_and_check_without_deletion(self):
+        from rvn_ledger.outputs import OutputError, publish, check_outputs
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = Path(tmp) / '.ledger-staging'
+            staging.mkdir()
+            (staging / 'recovery').write_bytes(b'keep')
+            with self.assertRaises(OutputError):
+                publish(tmp, {'invoices.json': b'[]', 'quarantine.json': b'[]', 'audit.json': b'{}'}, {})
+            with self.assertRaises(OutputError):
+                check_outputs(tmp)
+            self.assertEqual((staging / 'recovery').read_bytes(), b'keep')
+
+    def test_rollback_failure_keeps_recovery_and_fails_closed(self):
+        from rvn_ledger.outputs import OutputError, publish, check_outputs
+        with tempfile.TemporaryDirectory() as tmp:
+            files = {'invoices.json': b'[]', 'quarantine.json': b'[]', 'audit.json': b'{}'}
+            publish(tmp, files, {})
+            actual = os.replace
+            calls = 0
+            def persistent_failure(src, dst):
+                nonlocal calls
+                calls += 1
+                if calls >= 2:
+                    raise OSError('persistent storage failure')
+                return actual(src, dst)
+            with patch('rvn_ledger.outputs.os.replace', side_effect=persistent_failure), self.assertRaises(OutputError):
+                publish(tmp, {n: b'[1]' for n in files}, {})
+            self.assertTrue((Path(tmp) / '.ledger-staging' / 'previous' / 'invoices.json').exists())
+            with self.assertRaises(OutputError):
+                check_outputs(tmp)

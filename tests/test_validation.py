@@ -1,7 +1,9 @@
 import unittest
 from datetime import datetime, timezone
-from test_selection import rows
+
 from rvn_ledger.selection import deduplicate
+
+from test_selection import rows
 
 
 class ValidationTests(unittest.TestCase):

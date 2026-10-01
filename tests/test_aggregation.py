@@ -1,7 +1,8 @@
 import unittest
 from datetime import datetime, timezone
-from rvn_ledger.inputs import EventRow
+
 from rvn_ledger.aggregation import aggregate_usage
+from rvn_ledger.inputs import EventRow
 
 
 def event_row(n, account='a', metric='api_calls', units=2, event_id=None):

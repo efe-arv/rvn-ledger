@@ -1,6 +1,7 @@
 import unittest
 from datetime import date
 from fractions import Fraction
+
 from rvn_ledger.inputs import InputError
 
 # Fees are chosen so that proration is observable: 2900 * 16 / 30 = 1546.67 -> 1547,

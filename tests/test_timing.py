@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime, timedelta, timezone
+
 import test_validation
 
 
@@ -112,3 +113,13 @@ class TimingTests(unittest.TestCase):
                                      ([{'account_id': 'x', 'timezone': 'UTC'}], {k: v for k, v in period.items() if k != 'period_start_local'})]:
             with self.subTest(accounts=accounts, period=bad_period), self.assertRaises(InputError):
                 account_bounds(accounts, bad_period)
+
+    def test_submicrosecond_cutoff_and_period_boundaries(self):
+        classify = self.classify
+        for offset, cutoff in [('Z', '2026-10-03T00:00:00'), ('+03:00', '2026-10-03T03:00:00')]:
+            self.assertEqual(classify('2026-09-15T12:00:00Z', cutoff + '.0000000' + offset), 'accepted')
+            for digits in ('0000001', '000000000000000000001'):
+                self.assertEqual(classify('2026-09-15T12:00:00Z', cutoff + '.' + digits + offset), 'excluded_late')
+        self.assertEqual(classify('2026-09-30T23:59:59.999999999Z'), 'accepted')
+        self.assertEqual(classify('2026-10-01T00:00:00.000000001Z'), 'excluded_out_of_period')
+        self.assertEqual(classify('2026-08-31T23:59:59.999999999Z'), 'excluded_out_of_period')

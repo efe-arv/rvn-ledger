@@ -1,6 +1,15 @@
+import copy
 import hashlib
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
+
+from rvn_ledger.inputs import MAX_INTEGER_DIGITS
 from rvn_ledger.inputs import read_json, read_events, InputError
+
+from fixtures import event, EXPECTED_INVOICES, PLANS, RAW_EVENTS, run_cli, write_fixture
 
 
 class InputTests(unittest.TestCase):
@@ -107,6 +116,76 @@ class InputTests(unittest.TestCase):
                 self.assertEqual(row.error, 'invalid_json')
                 self.assertIsNone(row.salvaged_identity)
 
+    def test_configuration_surrogates_fail_closed(self):
+        from rvn_ledger.inputs import InputError, read_json
+        with self.assertRaises(InputError):
+            read_json(b'{"x":"\\ud800"}', 'config.json')
+
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class IntegerBoundaryTests(unittest.TestCase):
+    def test_admission_boundary_and_identity_recovery(self):
+        for sign in ('', '-'):
+            for digits in (MAX_INTEGER_DIGITS - 1, MAX_INTEGER_DIGITS, MAX_INTEGER_DIGITS + 1, 4300):
+                raw = ('{"event_id":"oversized","ingest_seq":1,"units":' + sign + '9' * digits + '}').encode()
+                row = read_events(raw)[0]
+                with self.subTest(sign=sign, digits=digits):
+                    if digits <= MAX_INTEGER_DIGITS:
+                        self.assertIsNone(row.error)
+                        self.assertEqual(row.value['units'], int(sign + '9' * digits))
+                    else:
+                        self.assertEqual(row.error, 'integer_too_large')
+                        self.assertEqual(row.salvaged_identity.event_id, 'oversized')
+                        with self.assertRaises(InputError):
+                            read_json(raw, 'plans.json')
+
+    def test_original_4300_digit_reproducer_keeps_billing_other_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lines = []
+            for i in range(2):
+                text = json.dumps(event(f'huge-{i}', i, 'acct_a', units=0))
+                lines.append(text.replace('"units": 0', '"units": ' + '9' * 4300).encode())
+            raw = RAW_EVENTS + b'\n'.join(lines) + b'\n'
+            inputs = write_fixture(root / 'in', raw=raw)
+            out = root / 'out'
+            result = run_cli('run', '--input-dir', inputs, '--out', out, '--json')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads((out / 'invoices.json').read_bytes()), EXPECTED_INVOICES)
+            quarantined = json.loads((out / 'quarantine.json').read_bytes())
+            self.assertEqual(quarantined[-2:], [{'event_id': f'huge-{i}', 'reason': 'integer_too_large'} for i in range(2)])
+            self.assertEqual(run_cli('check', '--out', out).returncode, 0)
+
+    def test_rejected_canonical_integer_cannot_be_replaced(self):
+        from rvn_ledger.selection import deduplicate
+        prefix = b'{"event_id":"same","ingest_seq":1,"units":'
+        rows = read_events(prefix + b'9' * (MAX_INTEGER_DIGITS + 1) + b'}\n'
+                           + b'{"event_id":"same","ingest_seq":2,"units":1}\n')
+        result = deduplicate(rows)
+        self.assertEqual(result.rejected, {1: 'integer_too_large'})
+        self.assertEqual(result.duplicates, {2: 1})
+
+    def test_maximum_admitted_products_serialize_under_minimum_python_limit(self):
+        largest = 10**MAX_INTEGER_DIGITS - 1
+        plans = copy.deepcopy(PLANS)
+        for plan in plans.values():
+            for prices in plan['prices'].values():
+                prices['subscription_fee_minor'] = largest
+                for tiers in prices['metrics'].values():
+                    for tier in tiers:
+                        tier['unit_price_micros'] = largest
+        values = [event(f'boundary-{i}', i, 'acct_a', units=largest) for i in range(3)]
+        raw = ('\n'.join(json.dumps(v) for v in values) + '\n').encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = write_fixture(root / 'in', raw=raw, plans=plans)
+            out = root / 'out'
+            env = {**os.environ, 'PYTHONINTMAXSTRDIGITS': '640'}
+            result = run_cli('run', '--input-dir', inputs, '--out', out, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(run_cli('check', '--out', out, env=env).returncode, 0)
+            invoices = json.loads((out / 'invoices.json').read_bytes())
+            self.assertEqual(invoices[0]['billable_units']['api_calls'], largest * 3)
