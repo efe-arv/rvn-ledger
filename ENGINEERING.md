@@ -15,10 +15,10 @@ are in the [README](README.md#billing-rules-and-where-each-one-lives).
 | 3 | `total = subtotal − credit_applied`, never negative; `credit_applied + credit_remaining = credit`; more credit never raises a total. | `money.apply_credit`, re-checked by `audit.reconcile` | `test_invariants`, `test_hazards` (rule 8) |
 | 4 | Every raw line ends in exactly one outcome — `accepted`, `duplicate_ignored`, `excluded_out_of_period`, `excluded_late` or `quarantined` — and the counts add up to the number of lines. | `selection` raises on a missing or second outcome; `audit.reconcile` | `test_selection`, `test_invariants` |
 | 5 | Every accepted event is billed exactly once, and units are conserved: accepted units = `billable_units` = units across the tier lines. | `aggregation`; `audit.reconcile` checks each source is used once | `test_audit`, `test_invariants` |
-| 6 | A later duplicate, the order of lines in the file, or another account's events never change an invoice. | `selection.copy_precedence` orders by `ingest_seq`, not arrival; aggregation is per account | `test_invariants` (seeded generated inputs) |
+| 6 | A later duplicate never changes an invoice. Line order doesn't either, provided the copies of an event have distinct `ingest_seq` values (on a tie the earlier line wins). Another account's events can only change an invoice by reusing one of its `event_id`s, because rule 2 deduplicates across accounts. | `selection.copy_precedence` orders by `ingest_seq`, then line; aggregation is per account | `test_invariants` (seeded inputs with unique ids and sequences), `test_selection` (ties) |
 | 7 | Currencies never mix and are never converted: every fee and tariff is looked up in the account's currency; totals are kept per currency. | `subscription`, `tiers.metric_tiers`; `totals_by_currency` in the manifest | `test_invoice`, `test_hazards` (rule 9) |
 | 8 | Periods are half-open in local time; the late cutoff is the local period end plus elapsed hours; proration counts local calendar days, so DST cannot add or remove a day. | `timing.period_bounds`, `timing.classify_time`, `subscription` | `test_timing`, `test_subscription`, `test_hazards` (rules 1, 3, 5) |
-| 9 | Same input bytes + same code + same time-zone database → byte-identical outputs. No clock time, random id, host name or absolute path is written; every ordering is explicit. | `outputs.serialize`, `pipeline` (the manifest records input hashes, code hashes, Python and tzdata versions) | `test_pipeline` (reruns from another working directory and `TZ`), `test_invariants`, `test_outputs` |
+| 9 | Same input bytes + same code + same time-zone database → byte-identical outputs. No clock time, random id, host name or absolute path is written; every ordering is explicit. | `outputs.serialize`, `pipeline` (the manifest records input hashes, code hashes, Python and tzdata versions) | `test_pipeline` (reruns from another working directory and `TZ`), `test_validation` (Python int-string limit), `test_invariants`, `test_outputs` |
 | 10 | Every invoice line traces back to its events and its formula, and the outputs reconcile with that trail before anything is written. | `audit.build_audit`, `audit.reconcile` | `test_audit` |
 | 11 | A bad event never stops a run; bad configuration always does, before any output exists. | `inputs` and `validation` (events) vs `context.prepare_context` (configuration) | `test_pipeline`, `test_hazards` (rule 4) |
 
@@ -28,7 +28,10 @@ the recorded inputs (fee, days, tariff, credit) through the same `money` and
 `tiers` functions that built the invoice. Any mismatch exits with code 1 and
 writes nothing. `rvn-ledger check` repeats the reconciliation on published
 files and verifies their hashes against the manifest. The checks are ordinary
-code, not `assert`s, so they still run under `python -O`.
+code, not `assert`s, so they still run under `python -O`. Because reconciliation
+reuses the billing functions, it catches assembly and bookkeeping errors, not a
+wrong rule; the hand-derived expected invoices in the tests are what catch a
+wrong rule.
 
 ## 2. Check precedence
 
@@ -94,8 +97,8 @@ start-up cost.
 **What this says.** A million events a month is still a single-machine batch
 job, and 78 seconds is not a problem for monthly billing. Memory is: every line,
 parsed event and decision is held at once, the per-event cost rises at 1000×
-(54 → 78 µs) as the process carries ~2 GiB of live objects, and 10,000× would
-not fit. So the first change is bounded memory, not a distributed system.
+(54 → 78 µs) as the process carries ~2 GiB of live objects, and 10,000× would,
+extrapolating linearly, need over 20 GiB. So the first change is bounded memory, not a distributed system.
 
 **Where the time goes**, as approximate shares from profiling a 100,000-event
 run: reading and strict parsing about a third, two-thirds of that being the
@@ -148,7 +151,7 @@ Where the rules are silent, the ledger makes these choices, and each one is
 pinned by a test:
 
 - **Equal `ingest_seq`** for two copies of one event: the earlier line in the file wins.
-- **A broken first copy stays broken.** If the winning copy is invalid it is quarantined; a later valid copy is still a duplicate.
+- **A broken first copy stays broken** if its `event_id` and `ingest_seq` can still be read: it is quarantined and a later valid copy is still a duplicate. A line too damaged to identify (truncated JSON, a repeated identity key) cannot be matched to its copies, so a later valid copy is billed.
 - **Late and out-of-period events are excluded, not quarantined.** `quarantine.json` only holds records that are unreadable or fail a rule-4 check.
 - **Exactly 48 hours after the period end is on time.** Only "more than 48 hours" is late.
 - **`quarantined_count`** counts quarantined records that name that account. Records for unknown accounts, and unreadable lines, belong to no invoice and appear only in `quarantine.json`.
@@ -158,7 +161,7 @@ pinned by a test:
 - **The period-end plan** is the segment covering the last local day of the period; a segment starting on the exclusive end date does not count. If no segment covers that day, the configuration is rejected.
 - **Days covered by no plan segment are not charged.** Overlapping segments are rejected.
 - **A missing `credit_minor` is an error**, not zero.
-- **JSON integers are limited to 256 digits.** Larger values in an event quarantine it (`integer_too_large`); in configuration they stop the run.
+- **JSON integers and timestamp fractions are limited to 256 digits.** A larger integer in an event quarantines it (`integer_too_large`) and in configuration stops the run; a longer fraction is `invalid_ts`. The limit is below the smallest int-string limit Python allows (640), so no interpreter setting can change a result.
 
 ## 5. What was cut
 

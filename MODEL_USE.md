@@ -6,10 +6,10 @@ Nothing below is implemented: the ledger makes no model calls. The line I'd hold
 
 **Where one helps: the quarantine, at volume.** At 1000× that's about 19,000 records a month.
 
-- *Triage:* code groups records by reason, account and failing field. A typed decision model in the style of Jev (a label from a fixed list plus a probability, never free text) tags each group with a likely cause and owner. Anything low-confidence goes to a person.
+- *Triage:* code groups records by reason, account and failing field. The reason says what failed, not why: a burst of `invalid_ts` from one producer after a release, `unknown_account` for an id that's onboarded but not yet in `accounts.json`, `unknown_metric` `"api_call"` from an old client. A typed decision model in the style of Jev (a label from a fixed list plus a probability, never free text) tags each group with a likely cause and owner. Anything low-confidence goes to a person.
 - *Statistics:* code computes the counts and month-over-month changes. A language model writes the summary for the owning team, and every number it writes must match the computed table.
 
-Neither one edits or re-admits a record. Fixes happen upstream, corrected events go through the same run, and billing never waits on either.
+Neither one edits or re-admits a record, and billing never waits on either. Fixes happen upstream. Under rule 2 a corrected copy with the same `event_id` is still a duplicate of the broken one, so the producer re-issues the event under a new id, or the period's input is corrected and rerun under a new manifest.
 
 **Local models only.** Quarantined records are customer usage data, so they never go to an inference provider. Both steps run on open-weight models inside our own environment. For triage that means a self-hosted Jev-style model such as [Kev](https://github.com/jaredpalmer/kev), retrained and calibrated on our own human-labelled quarantine history. Weights are pinned by hash and recorded with every label, just as the manifest records code and tzdata.
 

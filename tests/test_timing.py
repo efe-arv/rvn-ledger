@@ -123,3 +123,21 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(classify('2026-09-30T23:59:59.999999999Z'), 'accepted')
         self.assertEqual(classify('2026-10-01T00:00:00.000000001Z'), 'excluded_out_of_period')
         self.assertEqual(classify('2026-08-31T23:59:59.999999999Z'), 'excluded_out_of_period')
+
+    def test_late_cutoff_follows_the_configured_hours(self):
+        # External review (2026-10-02): every other timing test uses 48 h, so code that
+        # ignored the configured value would still pass. The hours come from period.json.
+        from rvn_ledger.timing import account_bounds, classify_time
+        helper = test_validation.ValidationTests()
+        period_end = datetime(2026, 10, 1, 4, tzinfo=timezone.utc)   # local midnight in New York
+        for hours in (0, 1, 72):
+            period = {'period_start_local': '2026-09-01', 'period_end_local_exclusive': '2026-10-01',
+                      'late_cutoff_hours_after_period_end': hours}
+            bounds = account_bounds([{'account_id': 'ny', 'timezone': 'America/New_York'}], period)['ny']
+            cutoff = period_end + timedelta(hours=hours)
+            self.assertEqual(bounds.cutoff, cutoff)
+            for delta, expected in [(0, 'accepted'), (1, 'excluded_late')]:
+                with self.subTest(hours=hours, delta=delta):
+                    ingested = (cutoff + timedelta(microseconds=delta)).isoformat()
+                    event = helper.validate(helper.event(ts='2026-09-15T12:00:00Z', ingested_at=ingested))
+                    self.assertEqual(classify_time(event, bounds), expected)
