@@ -82,3 +82,20 @@ def explain(data, *, event_id=None, line=None, events=None):
         records.append(record)
     return {'records': records, 'count': len(records), 'source_values_verified': source_rows is not None,
             'note': 'Published-output consistency is verified; source field values require matching --events.'}
+
+
+def explain_account(data, account_id):
+    """One account's published invoice with the trail behind every line: segments, tiers, sources, credit."""
+    if not isinstance(account_id, str) or not account_id:
+        raise InputError('--account must be a nonempty account id')
+    invoice = next((inv for inv in data['invoices'] if inv['account_id'] == account_id), None)
+    trail = data['audit']['invoices'].get(account_id)
+    if invoice is None or trail is None:
+        raise InputError(f'no invoice for account {account_id!r} in this run')
+    # load_verified has already reconciled the invoice against this trail, so the two agree to the cent.
+    return {'account_id': account_id, 'currency': invoice['currency'], 'timezone': invoice['timezone'],
+            'period_end_plan_id': trail['period_end_plan_id'], 'invoice': invoice,
+            'subscription_lines': trail['subscription_lines'], 'usage_lines': trail['usage_lines'],
+            'usage_sources': trail['usage_sources'], 'credit': trail['credit'],
+            'quarantined_lines': trail['quarantined_lines'],
+            'note': 'Amounts are the published invoice in minor units; formulas and sources come from the reconciled audit trail.'}

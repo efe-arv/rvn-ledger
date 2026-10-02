@@ -3,7 +3,7 @@
     rvn-ledger run --input-dir DIR --out OUT
     rvn-ledger run --events E --accounts A --plans P --period R --out OUT
     rvn-ledger check --out OUT
-    rvn-ledger explain --out OUT [--event-id ID | --line N] [--events events.jsonl]
+    rvn-ledger explain --out OUT [--event-id ID | --line N | --account ID] [--events events.jsonl]
 
 (`python -m rvn_ledger ...` is equivalent.)
 
@@ -46,11 +46,12 @@ def parse_args(argv):
     run.add_argument('--out', type=Path, default=Path("out"), help='output directory (created; staged replacement with rollback on caught errors)')
     check = commands.add_parser('check', help='verify a published output set: manifest hashes and audit reconciliation')
     check.add_argument('--out', type=Path, default=Path("out"))
-    diagnostic = commands.add_parser('explain', help='explain quarantined records or an exact event/source line')
+    diagnostic = commands.add_parser('explain', help="explain quarantined records, an exact event/source line, or one account's invoice")
     diagnostic.add_argument('--out', type=Path, default=Path('out'))
     selection = diagnostic.add_mutually_exclusive_group()
     selection.add_argument('--event-id', help='exact event identifier; includes its duplicate copies')
     selection.add_argument('--line', type=int, help='physical events.jsonl line number (1-based)')
+    selection.add_argument('--account', help="account id: its invoice, every line's formula, the source events and the credit")
     diagnostic.add_argument('--events', type=Path, help='optional original events.jsonl; values shown only after hash match')
     for command in (run, check, diagnostic):
         command.add_argument('--json', action='store_true', help='machine-readable summary')
@@ -109,9 +110,32 @@ def _summary(args, summary, message):
     return 0
 
 
+def _account_lines(r):
+    inv = r['invoice']
+    lines = [f"{r['account_id']}  {r['currency']} (amounts in minor units)  {r['timezone']}  period-end plan {r['period_end_plan_id']}"]
+    for s in r['subscription_lines']:
+        lines.append(f"  subscription {s['plan_id']} {s['from']}..{s['to']} {s['days']} days: {s['formula']}")
+    for u in r['usage_lines']:
+        upper = 'open' if u['tier_to'] is None else u['tier_to']
+        lines.append(f"  usage {u['metric']} [{u['tier_from']}, {upper}) {u['units']} units: {u['formula']}")
+    lines.append(f"  subtotal {inv['subtotal_minor']}  credit {r['credit']['credit_minor']} (applied {inv['credit_applied_minor']}, "
+                 f"remaining {inv['credit_remaining_minor']})  total {inv['total_minor']}")
+    for metric, units in inv['billable_units'].items():
+        rows = r['usage_sources'][metric]
+        lines.append(f"  sources {metric}: {len(rows)} events, {units} units" +
+                     ''.join(f"\n    line {s['line']} {json.dumps(s['event_id'], ensure_ascii=True)} {s['units']}" for s in rows))
+    quarantined = r['quarantined_lines']
+    lines.append(f"  quarantined lines: {', '.join(map(str, quarantined)) if quarantined else 'none'}")
+    return lines
+
+
 def command_explain(args):
-    from .diagnostics import explain, load_verified
-    result = explain(load_verified(args.out), event_id=args.event_id, line=args.line, events=args.events)
+    from .diagnostics import explain, explain_account, load_verified
+    data = load_verified(args.out)
+    if args.account is not None:
+        result = explain_account(data, args.account)
+        return _summary(args, result, '\n'.join(_account_lines(result)))
+    result = explain(data, event_id=args.event_id, line=args.line, events=args.events)
     # ASCII escapes keep identifiers safe on Windows legacy codepages.
     lines = [f"{r['source']['file']}:{r['source']['line']} event={json.dumps(r['event_id'], ensure_ascii=True)} status={r['status']}" +
              ''.join(f"\n  {reason['code']} ({reason['field']}): {reason['message']}" +
