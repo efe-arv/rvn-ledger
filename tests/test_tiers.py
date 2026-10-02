@@ -98,6 +98,8 @@ class TierTests(unittest.TestCase):
             [{'from_units': 0, 'to_units': None, 'unit_price_micros': True}],                        # bool price
             [{'from_units': 0, 'to_units': None, 'unit_price_micros': '5'}],                         # string price
             [{'from_units': 0, 'to_units': None}],                                                   # missing price
+            [{'from_units': 0, 'unit_price_micros': 5}],                                             # missing to_units is not an open tier
+            [{'from_units': 0, 'to_units': 10, 'unit_price_micros': 5}, {'from_units': 10, 'unit_price_micros': 4}],  # missing on the last tier
             [{'from_units': 0.0, 'to_units': None, 'unit_price_micros': 5}],                         # float bound
             [{'from_units': 0, 'to_units': True, 'unit_price_micros': 5}, {'from_units': 1, 'to_units': None, 'unit_price_micros': 5}],  # bool bound
             [{'from_units': 0, 'to_units': '10', 'unit_price_micros': 5}],                           # string bound

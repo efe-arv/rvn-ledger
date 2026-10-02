@@ -65,7 +65,10 @@ def tiers_from_document(entries, where: str = 'audit tariff') -> tuple[Tier, ...
         if not isinstance(entry, dict):
             raise InputError(f'{where}: every tier must be an object')
         lower = _count(entry.get('from_units'), f'{where}: from_units')
-        upper = entry.get('to_units')
+        if 'to_units' not in entry:
+            # An omitted key is not the open last tier: null must be written. Review (Astra, 2026-10-02) F2.
+            raise InputError(f'{where}: every tier must state to_units (null for the open last tier)')
+        upper = entry['to_units']
         if upper is not None:
             upper = _count(upper, f'{where}: to_units')
         tiers.append(Tier(lower, upper, _count(entry.get('unit_price_micros'), f'{where}: unit_price_micros')))

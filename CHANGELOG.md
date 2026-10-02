@@ -54,6 +54,10 @@ unchanged by them; the manifest gained `versions.timezones`.
 - `explain` failures are no longer reported as `publication failed`: an unreadable `--events` file is
   an input error (`error: --events: cannot read ...`) and a published set that fails its check is
   `check failed: ...`, both exit 2 as before.
+- Every tier must state `to_units` (`null` for the open last tier); an omitted key is a configuration
+  error, no longer read as an open bracket. The supplied data and the demo already write the key.
+- The benchmark receipt (`docs/benchmark-results.json`) is regenerated on the released sources; the
+  working-set and profile figures in ENGINEERING.md are labelled as separate measurements.
 
 - Require unique invoice account ids matching the audit accounts exactly, and
   require each duplicate to point to its eligible canonical line. A quarantined
