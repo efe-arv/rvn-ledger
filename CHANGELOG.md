@@ -1,24 +1,26 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-10-02
 
-Further output-validation review (billing results and output format unchanged):
+- `main` is now the command-line tool only: `run`, `check`, `explain`. Excel support moved to the
+  `feature/excel` branch and the standalone verification scripts to `feature/independent-verifiers`.
+  The root `cli.py` shim is gone; use `rvn-ledger` or `python -m rvn_ledger`.
+- Every billing rule is implemented once. Audit reconciliation now checks rule-independent invariants and
+  recomputes each line from the recorded inputs through the same `money` and `tiers` functions, instead of a
+  second copy of the arithmetic. `audit.json` records the tariff each usage line was priced on.
+- Currencies are no longer a hard-coded list: any three-letter code is accepted if `plans.json` prices it.
+- Tests reorganised: `tests/test_hazards.py` (one test per rule), `tests/test_invariants.py`, shared fixtures in
+  `tests/fixtures.py`; review-round test files folded into the module they test.
+- Timestamp fractions are capped at 256 digits (a longer one is `invalid_ts`), so whether a timestamp
+  parses no longer depends on Python's int-string limit (`PYTHONINTMAXSTRDIGITS`).
+- Stale verifier receipts and logs removed from the repository root; the scripts that write them live on
+  `feature/independent-verifiers`.
+- Apart from the timestamp-fraction limit, invoices and quarantine output for the same inputs are
+  byte-identical to 1.2.0.
 
-- Require unique invoice account ids matching the audit accounts exactly, and
-  require each duplicate to point to its eligible canonical line. A quarantined
-  line with an unreadable ingestion sequence cannot be that target.
-- Check exact integer types throughout invoice/audit numeric fields and manifest
-  counts/totals; equal-valued floats and booleans are rejected by `check` and
-  `explain`, as well as pre-publication reconciliation.
-- Validate complete tariffs through the same parser for configuration and audit,
-  including unused brackets and accounts with zero usage.
-- Reject list/object account time zones as controlled configuration errors
-  (exit 2), before any publication, instead of raising an unhandled TypeError.
-- Clarify the Python runtime and time-zone provenance prerequisites for identical
-  output bytes, and that configuration validation precedes event parsing, not
-  the CLI's file reads.
-
-External review of 2.0.0 (three P2 findings on the verification layer; billing arithmetic unchanged):
+Two further external review rounds on the verification layer, merged before release.
+Billing arithmetic and the `invoices.json`, `quarantine.json` and `audit.json` bytes are
+unchanged by them; the manifest gained `versions.timezones`.
 
 - `check` (and the pre-publication reconciliation) now ties the audit trail to the manifest rules: the
   rules must be a valid billing period read through the same strict parsers as `period.json`; every
@@ -35,8 +37,6 @@ External review of 2.0.0 (three P2 findings on the verification layer; billing a
   zones came from different databases; it no longer assumes that the database holding the first `UTC` file
   on TZPATH served every zone. A system version is recorded as `2026c`, no longer `version 2026c`. `check`
   requires the provenance to name exactly the invoiced zones.
-- Output sets published by 2.0.0 fail `check` because their manifest has no `versions.timezones`; rerun
-  `run` to republish them. `invoices.json`, `quarantine.json` and `audit.json` are byte-identical to 2.0.0.
 - `pipeline.tzdata_version` now takes the zone keys to summarise; `scripts/benchmark.py` reports the
   manifest's own summary.
 - Each billed zone's rules are now built with `ZoneInfo.from_file` from one read of its TZif bytes, and
@@ -55,23 +55,19 @@ External review of 2.0.0 (three P2 findings on the verification layer; billing a
   an input error (`error: --events: cannot read ...`) and a published set that fails its check is
   `check failed: ...`, both exit 2 as before.
 
-## 2.0.0 — 2026-10-02
-
-- `main` is now the command-line tool only: `run`, `check`, `explain`. Excel support moved to the
-  `feature/excel` branch and the standalone verification scripts to `feature/independent-verifiers`.
-  The root `cli.py` shim is gone; use `rvn-ledger` or `python -m rvn_ledger`.
-- Every billing rule is implemented once. Audit reconciliation now checks rule-independent invariants and
-  recomputes each line from the recorded inputs through the same `money` and `tiers` functions, instead of a
-  second copy of the arithmetic. `audit.json` records the tariff each usage line was priced on.
-- Currencies are no longer a hard-coded list: any three-letter code is accepted if `plans.json` prices it.
-- Tests reorganised: `tests/test_hazards.py` (one test per rule), `tests/test_invariants.py`, shared fixtures in
-  `tests/fixtures.py`; review-round test files folded into the module they test.
-- Timestamp fractions are capped at 256 digits (a longer one is `invalid_ts`), so whether a timestamp
-  parses no longer depends on Python's int-string limit (`PYTHONINTMAXSTRDIGITS`).
-- Stale verifier receipts and logs removed from the repository root; the scripts that write them live on
-  `feature/independent-verifiers`.
-- Apart from the timestamp-fraction limit, invoices and quarantine output for the same inputs are
-  byte-identical to 1.2.0.
+- Require unique invoice account ids matching the audit accounts exactly, and
+  require each duplicate to point to its eligible canonical line. A quarantined
+  line with an unreadable ingestion sequence cannot be that target.
+- Check exact integer types throughout invoice/audit numeric fields and manifest
+  counts/totals; equal-valued floats and booleans are rejected by `check` and
+  `explain`, as well as pre-publication reconciliation.
+- Validate complete tariffs through the same parser for configuration and audit,
+  including unused brackets and accounts with zero usage.
+- Reject list/object account time zones as controlled configuration errors
+  (exit 2), before any publication, instead of raising an unhandled TypeError.
+- Clarify the Python runtime and time-zone provenance prerequisites for identical
+  output bytes, and that configuration validation precedes event parsing, not
+  the CLI's file reads.
 
 ## 1.2.0 — 2026-10-01
 
