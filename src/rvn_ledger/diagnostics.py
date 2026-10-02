@@ -47,7 +47,10 @@ def explain(data, *, event_id=None, line=None, events=None):
         raise InputError('--line must be a positive physical source line number')
     source_rows = None
     if events is not None:
-        raw = Path(events).read_bytes()
+        try:
+            raw = Path(events).read_bytes()
+        except OSError as exc:
+            raise InputError(f'--events: cannot read {events}: {exc.strerror}') from exc
         expected = data['manifest']['inputs']['events.jsonl']['sha256']
         if hashlib.sha256(raw).hexdigest() != expected:
             raise InputError('--events differs from the input hash recorded in this run')

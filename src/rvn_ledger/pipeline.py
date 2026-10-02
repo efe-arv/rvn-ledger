@@ -34,12 +34,13 @@ class LedgerRun:
 
 
 def tzdata_version(zones) -> str:
-    """One line naming the time zone data the given zone keys actually resolve against.
+    """One line naming the time zone data the given zone keys resolve against on this host now.
 
     Resolution is per zone (review F3): zoneinfo takes a file under any TZPATH root before the
     tzdata package, so one root holding a single zone file bills that zone on other rules than
     the package the rest of the zones come from. The summary says 'mixed: ...' in that case; the
-    manifest's `versions.timezones` carries the per-zone source, version and TZif hash.
+    manifest's `versions.timezones` carries the per-zone source, version and TZif hash, taken
+    from the bytes the run's bounds were built from rather than from this fresh read.
     """
     return provenance_summary(timezone_provenance(zones))
 
@@ -86,7 +87,8 @@ def run_ledger(raw: dict) -> LedgerRun:
     counts.update({'invoices': len(documents), 'quarantine_entries': len(quarantine),
                    'subscription_lines': sum(len(inv.subscription.segments) for inv in invoices),
                    'usage_lines': sum(len(inv.usage_lines) for inv in invoices)})
-    provenance = timezone_provenance(account.timezone for account in context.accounts.values())
+    # The records of the TZif bytes each account's bounds were built from, not a fresh read of the host.
+    provenance = timezone_provenance(context.bounds[account_id].zone for account_id in context.accounts)
     manifest = {
         'ledger_version': LEDGER_VERSION,
         'rules': {'source': RULES_SOURCE, 'period_start_local': period['period_start_local'],

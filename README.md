@@ -79,7 +79,8 @@ the run before anything is written, because every invoice would be suspect.
 - **`events.jsonl`** — one JSON object per line:
   `{"event_id", "ingest_seq", "account_id", "metric", "units", "ts", "ingested_at"}`.
   `ts` is when the usage happened and `ingested_at` when it was received, both
-  ISO 8601 with an explicit offset.
+  ISO 8601 with an explicit offset. A UTF-8 byte order mark at the start of the
+  file is ignored for parsing; every hash still covers the bytes as written.
 - **`accounts.json`** — accounts with an IANA `timezone`, a `currency`, a
   `credit_minor` and dated `plan_segments` (`[from, to)` local dates).
 - **`plans.json`** — per plan and currency: a full-period `subscription_fee_minor`

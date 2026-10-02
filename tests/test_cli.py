@@ -156,3 +156,48 @@ class SafeHumanDisplayTests(unittest.TestCase):
         self.assertEqual(display('plain', io.TextIOWrapper(io.BytesIO(), encoding='ascii')), 'plain')
         self.assertEqual(display('fatura-東京', io.StringIO()), 'fatura-東京')          # no byte encoding: nothing to escape
         self.assertEqual(display('bad\udcff', io.TextIOWrapper(io.BytesIO(), encoding='utf-8')), 'bad\\udcff')  # undecodable file name byte
+
+
+class ExplainFailureLabelTests(unittest.TestCase):
+    """`explain` never publishes: its failures must not be reported as a failed publication."""
+
+    def published(self, tmp):
+        inputs = write_fixture(Path(tmp) / 'in')
+        out = Path(tmp) / 'out'
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(['run', '--input-dir', str(inputs), '--out', str(out)]), 0)
+        return inputs, out
+
+    def explain(self, *argv):
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            code = main(['explain', *argv])
+        return code, stderr.getvalue()
+
+    def test_unreadable_events_file_is_an_input_error(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            inputs, out = self.published(tmp)
+            code, text = self.explain('--out', str(out), '--events', str(Path(tmp) / 'missing.jsonl'))
+            self.assertEqual(code, 2)
+            self.assertTrue(text.startswith('error: --events: cannot read '), text)
+            self.assertNotIn('publication failed', text)
+            code, text = self.explain('--out', str(out), '--events', str(inputs))   # a directory, not a file
+            self.assertEqual(code, 2)
+            self.assertTrue(text.startswith('error: --events: cannot read '), text)
+
+    def test_output_set_problems_are_check_failures(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            inputs, out = self.published(tmp)
+            (out / 'invoices.json').write_bytes(b'[]\n')
+            code, text = self.explain('--out', str(out))
+            self.assertEqual(code, 2)
+            self.assertTrue(text.startswith('check failed: '), text)
+            code, text = self.explain('--out', str(Path(tmp) / 'never-published'))
+            self.assertEqual(code, 2)
+            self.assertTrue(text.startswith('check failed: '), text)
+            self.assertNotIn('publication failed', text)
+            # `run` keeps its own label: a publication that cannot proceed is still a publication failure.
+            blocked = Path(tmp) / 'blocked'
+            blocked.write_bytes(b'keep')
+            with contextlib.redirect_stderr(io.StringIO()) as stderr:
+                self.assertEqual(main(['run', '--input-dir', str(inputs), '--out', str(blocked)]), 2)
+            self.assertTrue(stderr.getvalue().startswith('publication failed: '), stderr.getvalue())

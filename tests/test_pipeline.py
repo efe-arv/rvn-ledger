@@ -3,10 +3,13 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -272,3 +275,196 @@ class TimezoneProvenanceTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertEqual(timezone_provenance([key]), {key: {'source': 'unknown', 'version': '', 'sha256': None}})
         self.assertEqual(tzdata_version(['/etc/hostname']), 'unknown')
+
+    @staticmethod
+    def shadow_tree(root, key, data):
+        path = root / 'tz' / key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return root / 'tz'
+
+    @unittest.skipUnless(importlib.util.find_spec('tzdata'), 'optional tzdata package absent; cannot build a mixed-source run')
+    def test_bounds_and_provenance_come_from_the_same_bytes_under_reset_tzpath_and_a_warm_zoneinfo_cache(self):
+        # Reviewer repro: zoneinfo caches ZoneInfo(key) instances and `reset_tzpath` rebinds zoneinfo.TZPATH, so a
+        # run that asks ZoneInfo(key) for the rules and then looks up TZPATH itself to describe them can bill on
+        # one database and record another. Both must come from one read of the exact TZif bytes.
+        import zoneinfo
+        from datetime import datetime, timezone
+        from importlib import resources
+        from zoneinfo import ZoneInfo
+        from rvn_ledger.timing import account_bounds
+        utc_bytes = resources.files('tzdata.zoneinfo').joinpath('UTC').read_bytes()
+        ZoneInfo('Europe/Istanbul')                                 # warm the cache with whatever the host resolves
+        original = zoneinfo.TZPATH
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            tree = self.shadow_tree(Path(tmp), 'Europe/Istanbul', utc_bytes)
+            try:
+                zoneinfo.reset_tzpath([str(tree)])
+                bounds = account_bounds(ACCOUNTS, PERIOD)
+                run = run_fixture()
+            finally:
+                zoneinfo.reset_tzpath(original)
+                ZoneInfo.clear_cache()
+        self.assertEqual(bounds['acct_a'].start, datetime(2026, 9, 1, tzinfo=timezone.utc))   # the shadow file's rules
+        self.assertEqual(bounds['acct_a'].zone.sha256, hashlib.sha256(utc_bytes).hexdigest())  # retained with the bounds
+        self.assertEqual(bounds['acct_a'].zone.source, 'system')
+        self.assertEqual(run.manifest['versions']['timezones']['Europe/Istanbul'],
+                         {'source': 'system', 'version': '(version file absent)', 'sha256': hashlib.sha256(utc_bytes).hexdigest()})
+        self.assertEqual(run.manifest['counts']['excluded_late'], 0)                          # billing followed the same bytes
+        for key in ('America/New_York', 'Asia/Tokyo', 'UTC'):
+            self.assertEqual(run.manifest['versions']['timezones'][key]['source'], 'tzdata package', key)
+        self.assertTrue(run.manifest['versions']['tzdata'].startswith('mixed: '))
+
+    @unittest.skipUnless(importlib.util.find_spec('tzdata'), 'optional tzdata package absent; cannot build a mixed-source run')
+    def test_manifest_records_the_bytes_the_bounds_were_built_from_not_a_later_read(self):
+        # If the zone file changes after the bounds were resolved, the manifest must still hash the bytes that
+        # billed the run; re-reading the file system at manifest time would describe rules nobody used.
+        import zoneinfo
+        from importlib import resources
+        from zoneinfo import ZoneInfo
+        from rvn_ledger import pipeline
+        utc_bytes = resources.files('tzdata.zoneinfo').joinpath('UTC').read_bytes()
+        istanbul_bytes = resources.files('tzdata.zoneinfo.Europe').joinpath('Istanbul').read_bytes()
+        original = zoneinfo.TZPATH
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            tree = self.shadow_tree(Path(tmp), 'Europe/Istanbul', utc_bytes)
+            real_prepare = pipeline.prepare_context
+
+            def prepare_then_swap_file(*args, **kwargs):
+                context = real_prepare(*args, **kwargs)
+                (tree / 'Europe' / 'Istanbul').write_bytes(istanbul_bytes)
+                return context
+            try:
+                zoneinfo.reset_tzpath([str(tree)])
+                with patch('rvn_ledger.pipeline.prepare_context', side_effect=prepare_then_swap_file):
+                    run = run_fixture()
+            finally:
+                zoneinfo.reset_tzpath(original)
+                ZoneInfo.clear_cache()
+        self.assertEqual(run.manifest['counts']['excluded_late'], 0)                          # billed on the UTC bytes
+        self.assertEqual(run.manifest['versions']['timezones']['Europe/Istanbul']['sha256'], hashlib.sha256(utc_bytes).hexdigest())
+        self.assertNotEqual(hashlib.sha256(utc_bytes).hexdigest(), hashlib.sha256(istanbul_bytes).hexdigest())
+
+
+class LeadingByteOrderMarkRunTests(unittest.TestCase):
+    """The demo's first line (`api-first`, seq 2) has a conflicting later copy naming another account.
+    A UTF-8 BOM in front of that line must not cost it its identity: otherwise the copy becomes canonical
+    and bills usage the hand-derived outputs say does not exist. Hashes stay those of the raw bytes."""
+
+    BOM = b'\xef\xbb\xbf'
+
+    def test_demo_with_a_leading_bom_bills_exactly_the_hand_derived_outputs(self):
+        demo = ROOT / 'examples' / 'demo'
+        raw = (demo / 'events.jsonl').read_bytes()
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            inputs = Path(tmp) / 'in'
+            inputs.mkdir()
+            for name in ('accounts.json', 'plans.json', 'period.json'):
+                shutil.copyfile(demo / name, inputs / name)
+            (inputs / 'events.jsonl').write_bytes(self.BOM + raw)
+            out = Path(tmp) / 'out'
+            result = run_cli('run', '--input-dir', inputs, '--out', out)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for name in ('invoices', 'quarantine'):
+                self.assertEqual(json.loads((out / f'{name}.json').read_bytes()), json.loads((demo / f'expected-{name}.json').read_bytes()), name)
+            decisions = json.loads((out / 'audit.json').read_bytes())['decisions']
+            first_line = raw.split(b'\n', 1)[0] + b'\n'
+            self.assertEqual({k: decisions[0][k] for k in ('line', 'event_id', 'status')}, {'line': 1, 'event_id': 'api-first', 'status': 'accepted'})
+            self.assertEqual(decisions[0]['sha256'], hashlib.sha256(self.BOM + first_line).hexdigest())
+            self.assertEqual({k: decisions[1][k] for k in ('event_id', 'status', 'canonical_line')}, {'event_id': 'api-first', 'status': 'duplicate_ignored', 'canonical_line': 1})
+            manifest = json.loads((out / 'manifest.json').read_bytes())
+            self.assertEqual(manifest['inputs']['events.jsonl'], {'sha256': hashlib.sha256(self.BOM + raw).hexdigest(), 'bytes': len(raw) + 3, 'records': 9})
+            self.assertEqual(run_cli('check', '--out', out).returncode, 0)
+            copies = run_cli('explain', '--out', out, '--event-id', 'api-first', '--events', inputs / 'events.jsonl', '--json')
+            self.assertEqual(copies.returncode, 0, copies.stderr)
+            payload = json.loads(copies.stdout)
+            self.assertTrue(payload['source_values_verified'])
+            self.assertEqual([(r['source']['line'], r['status']) for r in payload['records']], [(1, 'accepted'), (2, 'duplicate_ignored')])
+            self.assertEqual(payload['records'][1]['canonical_line'], 1)
+
+
+class ZoneRulesMatchRecordedBytesTests(unittest.TestCase):
+    """The provenance record must describe the bytes the run was billed on. `ZoneInfo(key)` serves a
+    process-wide cache that ignores later TZPATH changes and later file changes, while a hash taken
+    by re-reading the file describes whatever is on disk at that moment; the two can disagree. Each
+    zone is therefore built from one read of its TZif bytes and the record is taken from that same read."""
+
+    @staticmethod
+    def fixed_offset_tzif(seconds: int, abbreviation: bytes = b'TST') -> bytes:
+        # A minimal version-1 TZif file with no transitions and one local time type.
+        abbreviation += b'\0'
+        return (b'TZif' + b'\x00' + b'\x00' * 15 + struct.pack('>6l', 0, 0, 0, 0, 1, len(abbreviation))
+                + struct.pack('>lBB', seconds, 0, 0) + abbreviation)
+
+    @unittest.skipUnless(importlib.util.find_spec('tzdata'), 'optional tzdata package absent; the other fixture zones need it')
+    def test_run_bills_on_the_bytes_it_records_even_when_zoneinfo_has_the_zone_cached(self):
+        import zoneinfo
+        from zoneinfo import ZoneInfo
+        from rvn_ledger.timing import account_bounds
+        custom = self.fixed_offset_tzif(5 * 3600)
+        cached = ZoneInfo('Europe/Istanbul')        # whatever this host had: now in the process cache
+        self.assertEqual(datetime(2026, 9, 1, tzinfo=cached).utcoffset(), timedelta(hours=3))
+        original = zoneinfo.TZPATH
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            tree = Path(tmp) / 'tz'
+            (tree / 'Europe').mkdir(parents=True)
+            (tree / 'Europe' / 'Istanbul').write_bytes(custom)
+            zoneinfo.reset_tzpath([tree])
+            try:
+                bounds = account_bounds([{'account_id': 'ist', 'timezone': 'Europe/Istanbul'}],
+                                        {'period_start_local': '2026-09-01', 'period_end_local_exclusive': '2026-10-01',
+                                         'late_cutoff_hours_after_period_end': 48})['ist']
+                run = run_fixture()
+            finally:
+                zoneinfo.reset_tzpath(original)
+        self.assertIs(ZoneInfo('Europe/Istanbul'), cached)   # the cache never noticed; a run trusting it would bill on +03:00
+        self.assertEqual(bounds.start, datetime(2026, 8, 31, 19, tzinfo=timezone.utc))   # the +05:00 rules of the file
+        self.assertEqual(bounds.cutoff, datetime(2026, 10, 2, 19, tzinfo=timezone.utc))
+        self.assertEqual(bounds.zone.sha256, hashlib.sha256(custom).hexdigest())
+        record = run.manifest['versions']['timezones']['Europe/Istanbul']
+        self.assertEqual(record, {'source': 'system', 'version': '(version file absent)', 'sha256': hashlib.sha256(custom).hexdigest()})
+        # The run really followed those bytes: at +05:00 the period is [Aug 31 19:00Z, Sep 30 19:00Z), so the
+        # Aug 31 20:59:59Z event (a4) is inside it and both Sep 30 20:59:59Z events (a5, a6) are past its end;
+        # on the cached +03:00 rules the counts would be 1 out of period and 1 late.
+        self.assertEqual(run.manifest['counts']['excluded_out_of_period'], 2)
+        self.assertEqual(run.manifest['counts']['excluded_late'], 0)
+        self.assertEqual(run.manifest['counts']['accepted'], 8)
+        self.assertEqual(run.audit['invoices']['acct_a']['usage_sources']['api_calls'][-1]['event_id'], 'a4')
+        for key in ('America/New_York', 'Asia/Tokyo', 'UTC'):
+            self.assertEqual(run.manifest['versions']['timezones'][key]['source'], 'tzdata package', key)
+        from rvn_ledger.audit import reconcile
+        reconcile(run.invoices, run.quarantine, run.audit, run.manifest)
+
+    def test_provenance_is_taken_from_the_bytes_the_rules_were_built_from_not_a_later_read(self):
+        import zoneinfo
+        from rvn_ledger.timing import resolve_zone, timezone_provenance, zone_provenance
+        before, after = self.fixed_offset_tzif(5 * 3600), self.fixed_offset_tzif(-2 * 3600, b'OTH')
+        original = zoneinfo.TZPATH
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            tree = Path(tmp) / 'tz'
+            tree.mkdir()
+            (tree / 'UTC').write_bytes(before)
+            zoneinfo.reset_tzpath([tree])
+            try:
+                resolved = resolve_zone('UTC')
+                (tree / 'UTC').write_bytes(after)          # the file changes after the rules were resolved
+                self.assertEqual(timezone_provenance([resolved]), {'UTC': {'source': 'system', 'version': '(version file absent)', 'sha256': hashlib.sha256(before).hexdigest()}})
+                self.assertEqual(datetime(2026, 9, 1, tzinfo=resolved.tz).utcoffset(), timedelta(hours=5))
+                self.assertEqual(zone_provenance('UTC')['sha256'], hashlib.sha256(after).hexdigest())   # a fresh read is a different claim
+                again = resolve_zone('UTC')
+                self.assertEqual(again.sha256, hashlib.sha256(after).hexdigest())
+                self.assertEqual(datetime(2026, 9, 1, tzinfo=again.tz).utcoffset(), timedelta(hours=-2))
+                with self.assertRaises(RuntimeError):      # one run may not record two different rule sets under one key
+                    timezone_provenance([resolved, again])
+            finally:
+                zoneinfo.reset_tzpath(original)
+
+    def test_every_account_in_one_zone_shares_one_resolution(self):
+        from rvn_ledger.timing import account_bounds
+        bounds = account_bounds([{'account_id': 'a', 'timezone': 'UTC'}, {'account_id': 'b', 'timezone': 'UTC'}, {'account_id': 'c', 'timezone': 'Europe/Istanbul'}],
+                                {'period_start_local': '2026-09-01', 'period_end_local_exclusive': '2026-10-01', 'late_cutoff_hours_after_period_end': 48})
+        self.assertIs(bounds['a'].zone, bounds['b'].zone)
+        self.assertEqual((bounds['a'].zone.key, bounds['c'].zone.key), ('UTC', 'Europe/Istanbul'))
+        self.assertTrue(len(bounds['c'].zone.sha256) == 64)
+        run = run_fixture()
+        self.assertEqual(run.manifest['versions']['timezones']['UTC']['sha256'], bounds['a'].zone.sha256)

@@ -64,9 +64,26 @@ def exercise(cli, directory):
     copies = invoke('explain', '--out', out, '--event-id', 'api-first')['records']
     require(len(copies) == 2 and copies[1]['canonical_line'] == 1, 'global canonical selection changed')
 
+    # A UTF-8 BOM in front of the demo must not hand `api-first` to its conflicting later copy; hashes cover the raw bytes.
+    marked, marked_out = directory / 'inputs-bom', directory / 'out-bom'
+    shutil.copytree(data, marked)
+    raw = (data / 'events.jsonl').read_bytes()
+    (marked / 'events.jsonl').write_bytes(b'\xef\xbb\xbf' + raw)
+    invoke('run', '--input-dir', marked, '--out', marked_out)
+    for name in ('invoices', 'quarantine'):
+        expected = json.loads((demo / f'expected-{name}.json').read_bytes())
+        require(json.loads((marked_out / f'{name}.json').read_bytes()) == expected, f'{name} differs from hand-derived fixture with a leading BOM')
+    manifest = json.loads((marked_out / 'manifest.json').read_bytes())
+    require(manifest['inputs']['events.jsonl']['sha256'] == hashlib.sha256(b'\xef\xbb\xbf' + raw).hexdigest(), 'BOM input hash is not of the raw bytes')
+    copies = invoke('explain', '--out', marked_out, '--event-id', 'api-first', '--events', marked / 'events.jsonl')['records']
+    require(len(copies) == 2 and copies[0]['status'] == 'accepted' and copies[1]['canonical_line'] == 1, 'BOM changed canonical selection')
+
+    missing = invoke('explain', '--out', out, '--events', directory / 'absent.jsonl', expected=2)
+    require(missing.stderr.startswith('error: --events: cannot read'), f'unexpected explain diagnostic: {missing.stderr}')
     (out / 'invoices.json').write_bytes(b'[]\n')
     invoke('check', '--out', out, expected=2)
-    invoke('explain', '--out', out, expected=2)
+    tampered = invoke('explain', '--out', out, expected=2)
+    require(tampered.stderr.startswith('check failed:'), f'unexpected explain diagnostic: {tampered.stderr}')
     return {'version': version('rvn-ledger'), 'calls': calls, 'output_sha256': original, 'result': 'OK'}
 
 

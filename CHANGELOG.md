@@ -23,6 +23,21 @@ External review of 2.0.0 (three P2 findings on the verification layer; billing a
   `run` to republish them. `invoices.json`, `quarantine.json` and `audit.json` are byte-identical to 2.0.0.
 - `pipeline.tzdata_version` now takes the zone keys to summarise; `scripts/benchmark.py` reports the
   manifest's own summary.
+- Each billed zone's rules are now built with `ZoneInfo.from_file` from one read of its TZif bytes, and
+  `versions.timezones` records exactly those bytes. Previously the bounds came from the process-wide
+  `ZoneInfo(key)` cache, which keeps whatever the first lookup in the process found and ignores a later
+  `zoneinfo.reset_tzpath` or changed file, while the hash was taken by re-reading the file afterwards,
+  so the record could describe rules the run did not bill on. Every account in one zone shares one
+  resolution (`PeriodBounds.zone`); two different byte sequences under one key in one run is an error.
+  The usable-key listing follows the search path in force at run time.
+- A UTF-8 byte order mark at the start of `events.jsonl` is removed before the first line is parsed or
+  its identity salvaged; the line's SHA-256 in `audit.json` and the file hash in the manifest still
+  cover the BOM bytes. Previously the first record was quarantined as `invalid_json` without an
+  identity, so a later copy of the same `event_id` became canonical and could bill usage. A BOM on any
+  other line, or in a configuration file, is still rejected.
+- `explain` failures are no longer reported as `publication failed`: an unreadable `--events` file is
+  an input error (`error: --events: cannot read ...`) and a published set that fails its check is
+  `check failed: ...`, both exit 2 as before.
 
 ## 2.0.0 — 2026-10-02
 
