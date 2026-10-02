@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import tempfile
 import unittest
@@ -144,6 +145,117 @@ class AuditTests(unittest.TestCase):
                 result = run_cli('check', '--out', tmp)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertNotIn('Traceback', result.stderr)
+
+
+class OutputValidationTests(unittest.TestCase):
+    """Rehashed invalid documents must fail reconciliation, check and explain."""
+
+    def empty_run(self):
+        from rvn_ledger.pipeline import run_ledger
+        first = copy.deepcopy(ACCOUNTS[-1])
+        first['credit_minor'] = 0
+        accounts = [first, {**copy.deepcopy(first), 'account_id': 'acct_e'}]
+        return run_ledger({'events.jsonl': b'', 'accounts.json': json.dumps(accounts).encode(),
+                           'plans.json': json.dumps(PLANS).encode(), 'period.json': json.dumps(PERIOD).encode()})
+
+    def rejected(self, run, cli=False):
+        from rvn_ledger.audit import AuditError, reconcile
+        with self.assertRaises(AuditError):
+            reconcile(run.invoices, run.quarantine, run.audit, run.manifest)
+        if cli:
+            with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+                documents = {'invoices.json': run.invoices, 'quarantine.json': run.quarantine, 'audit.json': run.audit}
+                manifest = copy.deepcopy(run.manifest)
+                manifest['outputs'] = {}
+                for name, value in documents.items():
+                    raw = (json.dumps(value) + '\n').encode()
+                    (Path(tmp) / name).write_bytes(raw)
+                    manifest['outputs'][name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}
+                # Bypass the writer's type checks to exercise malformed published documents.
+                (Path(tmp) / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
+                for command in ('check', 'explain'):
+                    result = run_cli(command, '--out', tmp, '--json')
+                    self.assertEqual(result.returncode, 2, (command, result.stdout, result.stderr))
+                    self.assertEqual(result.stdout, '')
+                    self.assertIn('check failed:', result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+
+    def test_invoice_accounts_are_unique_and_match_the_audit(self):
+        from rvn_ledger.audit import reconcile
+        good = self.empty_run()
+        reconcile(good.invoices, good.quarantine, good.audit, good.manifest)
+        broken = copy.deepcopy(good)
+        broken.invoices[1]['account_id'] = broken.invoices[0]['account_id']
+        self.rejected(broken, cli=True)
+        broken = copy.deepcopy(good)
+        broken.audit['invoices']['unbilled'] = broken.audit['invoices'].pop('acct_e')
+        self.rejected(broken)
+
+    def test_duplicate_target_must_have_entered_canonical_selection(self):
+        from rvn_ledger.audit import reconcile
+        from rvn_ledger.pipeline import run_ledger
+        # The valid winner is later in the file; an invalid sequence never competes with it.
+        values = [event('same', 'bad', 'acct_a'), event('same', 3, 'acct_a'), event('same', 2, 'acct_a')]
+        run = run_ledger({'events.jsonl': raw_lines(values), 'accounts.json': json.dumps(ACCOUNTS).encode(),
+                          'plans.json': json.dumps(PLANS).encode(), 'period.json': json.dumps(PERIOD).encode()})
+        self.assertEqual(run.audit['decisions'][1]['canonical_line'], 3)
+        reconcile(run.invoices, run.quarantine, run.audit, run.manifest)
+        run.audit['decisions'][1]['canonical_line'] = 1
+        self.rejected(run, cli=True)
+
+    def test_all_numeric_output_fields_reject_equal_floats_and_booleans(self):
+        def numeric_paths(value, path=()):
+            if type(value) is int:
+                yield path, value
+            elif isinstance(value, dict):
+                for key, child in value.items():
+                    yield from numeric_paths(child, (*path, key))
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    yield from numeric_paths(child, (*path, index))
+
+        good = run_fixture()
+        for name in ('invoices', 'audit', 'manifest'):
+            for path, value in numeric_paths(getattr(good, name)):
+                replacements = [float(value), *([bool(value)] if value in (0, 1) else [])]
+                for replacement in replacements:
+                    broken = copy.deepcopy(good)
+                    target = getattr(broken, name)
+                    for part in path[:-1]:
+                        target = target[part]
+                    target[path[-1]] = replacement
+                    with self.subTest(document=name, path=path, replacement=replacement):
+                        self.rejected(broken)
+
+    def test_published_money_types_fail_check_and_explain(self):
+        cases = (
+            lambda r: r.invoices[0].update(total_minor=float(r.invoices[0]['total_minor'])),
+            lambda r: r.invoices[0].update(subtotal_minor=float(r.invoices[0]['subtotal_minor'])),
+            lambda r: r.invoices[0].update(credit_applied_minor=False),
+            lambda r: r.audit['invoices'][r.invoices[0]['account_id']]['credit'].update(applied_minor=False),
+            lambda r: r.manifest['totals_by_currency']['USD'].update(total_minor=float(r.manifest['totals_by_currency']['USD']['total_minor'])),
+        )
+        for index, mutate in enumerate(cases):
+            run = self.empty_run()
+            mutate(run)
+            with self.subTest(case=index):
+                self.rejected(run, cli=True)
+
+    def test_unused_audit_tariffs_are_validated(self):
+        good = self.empty_run()
+        account = good.invoices[0]['account_id']
+        cases = (
+            [{'from_units': 5, 'to_units': None, 'unit_price_micros': -1}],
+            [{'from_units': 0, 'to_units': None, 'unit_price_micros': -1}],
+            [{'from_units': 0, 'to_units': 10, 'unit_price_micros': 1}],
+            [{'from_units': 0, 'to_units': 10, 'unit_price_micros': 1},
+             {'from_units': 11, 'to_units': None, 'unit_price_micros': 1}],
+        )
+        for tiers in cases:
+            run = copy.deepcopy(good)
+            run.audit['invoices'][account]['usage_tariffs']['api_calls']['tiers'] = tiers
+            with self.subTest(tiers=tiers):
+                self.rejected(run, cli=True)
 
 
 class ManifestInputMetadataTests(unittest.TestCase):

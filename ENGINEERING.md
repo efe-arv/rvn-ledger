@@ -10,7 +10,7 @@ are in the [README](README.md#billing-rules-and-where-each-one-lives).
 
 | # | Invariant | Enforced by | Tested by |
 |---|---|---|---|
-| 1 | Money is integer minor units everywhere. No float is accepted as an amount or written to any output. | `money.py` rejects non-integers, booleans and negatives; `outputs.serialize` refuses floats | `test_money`, `test_outputs`, `test_hazards` (rule 7) |
+| 1 | Money is integer minor units everywhere. No float is accepted as an amount or written to any output. | `money.py` rejects non-integers, booleans and negatives; `outputs.serialize` refuses floats; `audit.reconcile` validates integer field types | `test_money`, `test_outputs`, `test_audit`, `test_hazards` (rule 7) |
 | 2 | Rounding happens once per line, half up; the subtotal is the sum of already-rounded lines. | `money.round_half_up`, `money.usage_amount`, `money.subscription_amount` | `test_money`, `test_hazards` (rules 5, 7) |
 | 3 | `total = subtotal − credit_applied`, never negative; `credit_applied + credit_remaining = credit`; more credit never raises a total. | `money.apply_credit`, re-checked by `audit.reconcile` | `test_invariants`, `test_hazards` (rule 8) |
 | 4 | Every raw line ends in exactly one outcome — `accepted`, `duplicate_ignored`, `excluded_out_of_period`, `excluded_late` or `quarantined` — and the counts add up to the number of lines. | `selection` raises on a missing or second outcome; `audit.reconcile` | `test_selection`, `test_invariants` |
@@ -18,7 +18,7 @@ are in the [README](README.md#billing-rules-and-where-each-one-lives).
 | 6 | A later duplicate never changes an invoice. Line order doesn't either, provided the copies of an event have distinct `ingest_seq` values (on a tie the earlier line wins). Another account's events can only change an invoice by reusing one of its `event_id`s, because rule 2 deduplicates across accounts. | `selection.copy_precedence` orders by `ingest_seq`, then line; aggregation is per account | `test_invariants` (seeded inputs with unique ids and sequences), `test_selection` (ties) |
 | 7 | Currencies never mix and are never converted: every fee and tariff is looked up in the account's currency; totals are kept per currency. | `subscription`, `tiers.metric_tiers`; `totals_by_currency` in the manifest | `test_invoice`, `test_hazards` (rule 9) |
 | 8 | Periods are half-open in local time; the late cutoff is the local period end plus elapsed hours; proration counts local calendar days, so DST cannot add or remove a day. | `timing.period_bounds`, `timing.classify_time`, `subscription` | `test_timing`, `test_subscription`, `test_hazards` (rules 1, 3, 5) |
-| 9 | Same input bytes + same code + same time-zone database → byte-identical outputs. No clock time, random id, host name or absolute path is written; every ordering is explicit. | `outputs.serialize`, `pipeline` (the manifest records input hashes, code hashes, Python and tzdata versions) | `test_pipeline` (reruns from another working directory and `TZ`), `test_validation` (Python int-string limit), `test_invariants`, `test_outputs` |
+| 9 | Same input bytes + same code + same Python version/implementation + same time-zone data and provenance → byte-identical outputs. No clock time, random id, host name or absolute path is written; every ordering is explicit. A Python version change alone changes the manifest. | `outputs.serialize`, `pipeline` (the manifest records input hashes, code hashes, Python and tzdata versions) | `test_pipeline` (reruns from another working directory and `TZ`), `test_validation` (Python int-string limit), `test_invariants`, `test_outputs` |
 | 10 | Every invoice line traces back to its events and its formula, and the outputs reconcile with that trail before anything is written. | `audit.build_audit`, `audit.reconcile` | `test_audit` |
 | 11 | A bad event never stops a run; bad configuration always does, before any output exists. | `inputs` and `validation` (events) vs `context.prepare_context` (configuration) | `test_pipeline`, `test_hazards` (rule 4) |
 
@@ -38,9 +38,10 @@ wrong rule.
 **Configuration first.** Accounts (ids, IANA time zones, credits), the period
 (its dates must agree with `days_in_period`) and plans (a fee for every plan an
 account uses and a tariff for every metric on its period-end plan, all in the
-account's currency) are validated before a single event is read. A
-configuration error stops the run: it would make every invoice suspect, and it
-cannot be quarantined line by line.
+account's currency) are validated before a single event is parsed or processed.
+The CLI reads all four files' bytes before this validation. A configuration
+error stops the run: it would make every invoice suspect, and it cannot be
+quarantined line by line.
 
 **Then each event line, in this order:**
 
@@ -121,8 +122,9 @@ under 2%.
    Full traceability still costs storage proportional to the input; it just
    leaves memory.
 3. **Cheaper per-event checks, same results.** Check for surrogates only in the
-   fields that are read; parse timestamps into integer seconds and nanoseconds
-   instead of fractions; write `audit.json` compactly; reconcile once and let
+   fields that are read; use integer seconds and nanoseconds for common
+   timestamps, retaining an exact residual for the supported fractions beyond
+   nine digits; write `audit.json` compactly; reconcile once and let
    `check` rely on the hashes plus a streaming reconciliation. The byte-identical
    and hand-verified tests guard each of these.
 4. **Parallelise only after global deduplication.** Splitting raw events by

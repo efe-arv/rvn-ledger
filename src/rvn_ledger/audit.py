@@ -51,6 +51,15 @@ def _require(condition, message):
         raise AuditError(message)
 
 
+def _integer_fields(document: dict, fields, where: str, *, nullable=()) -> None:
+    """Numeric equality alone cannot reject floats or booleans in integer output fields."""
+    for field in fields:
+        value = document[field]
+        if value is None and field in nullable:
+            continue
+        _require(type(value) is int and value >= 0, f'{where}: {field} must be a nonnegative integer')
+
+
 def _sha256_text(value) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
 
@@ -156,6 +165,10 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
     """Independent invariant check over the published documents; raises AuditError on the first inconsistency."""
     decisions = audit['decisions']
     counts = manifest['counts']
+    _integer_fields(counts, counts, 'manifest counts')
+    _integer_fields(manifest['quarantine_reasons'], manifest['quarantine_reasons'], 'quarantine reason counts')
+    for currency, bucket in manifest['totals_by_currency'].items():
+        _integer_fields(bucket, ('subtotal_minor', 'credit_applied_minor', 'total_minor', 'invoices'), currency)
     period_start, period_end, days_in_period, metrics = _manifest_period(manifest['rules'])
     last_day = period_end - timedelta(days=1)
     _require([d['line'] for d in decisions] == list(range(1, len(decisions) + 1)), 'decisions must cover raw lines 1..n exactly once')
@@ -174,13 +187,10 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
     decision_by_line = {d['line']: d for d in decisions}
     canonical = {}   # event_id -> canonical line, over every decision that took part in deduplication (review F2)
     for decision in decisions:
+        _integer_fields(decision, ('line',), 'decision')
         _require(_sha256_text(decision['sha256']), 'invalid source hash representation (raw source verification is a separate gate)')
         event_id = decision['event_id']
         if decision['status'] == 'duplicate_ignored':
-            target = decision_by_line.get(decision['canonical_line'])
-            _require(target is not None and target is not decision and target['status'] != 'duplicate_ignored'
-                     and isinstance(event_id, str) and event_id and target['event_id'] == event_id,
-                     'duplicate target must be a canonical decision with the same identity')
             continue
         if decision['status'] == 'accepted':
             _require(isinstance(event_id, str) and event_id, f'line {decision["line"]}: an accepted event must carry a nonempty string identity')
@@ -189,8 +199,18 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
         _require(isinstance(event_id, str) and event_id, f'line {decision["line"]}: identity must be a nonempty string')
         _require(event_id not in canonical, f'line {decision["line"]}: event identity already has canonical line {canonical.get(event_id)}')
         canonical[event_id] = decision['line']
+    # A winning copy may appear after its duplicates in the physical file.
+    for decision in decisions:
+        if decision['status'] == 'duplicate_ignored':
+            event_id = decision['event_id']
+            _integer_fields(decision, ('canonical_line',), 'duplicate decision')
+            _require(isinstance(event_id, str) and event_id
+                     and canonical.get(event_id) == decision['canonical_line'],
+                     'duplicate target must be the eligible canonical decision with the same identity')
     used_sources = Counter()
-    _require([inv['account_id'] for inv in invoices] == sorted(inv['account_id'] for inv in invoices), 'invoices are not sorted by account_id')
+    account_ids = [inv['account_id'] for inv in invoices]
+    _require(all(isinstance(account_id, str) and account_id for account_id in account_ids), 'invoice account ids must be nonempty strings')
+    _require(account_ids == sorted(audit['invoices']), 'invoice accounts must be unique, sorted and match the audit accounts')
     _require(counts['invoices'] == len(invoices) == len(audit['invoices']), 'invoice count differs from manifest or trail')
     totals = {}
     subscription_lines = usage_lines = 0
@@ -198,12 +218,23 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
         trail = audit['invoices'].get(inv['account_id'])
         _require(trail is not None, f'{inv["account_id"]}: no audit trail')
         where = inv['account_id']
+        _integer_fields(inv, ('subtotal_minor', 'credit_applied_minor', 'credit_remaining_minor', 'total_minor', 'quarantined_count'), where)
+        _integer_fields(inv['billable_units'], metrics, f'{where}: billable units')
+        for line in inv['lines']:
+            fields = ('days', 'amount_minor') if line['kind'] == 'subscription' else ('tier_from', 'tier_to', 'units', 'amount_minor')
+            _integer_fields(line, fields, f'{where}: invoice line', nullable=('tier_to',))
+        _integer_fields(trail['credit'], ('credit_minor', 'applied_minor', 'remaining_minor'), f'{where}: credit')
+        _require(all(type(line) is int and line > 0 for line in trail['quarantined_lines']), f'{where}: quarantined lines must be positive integers')
+        for line in trail['usage_lines']:
+            _integer_fields(line, ('tier_from', 'tier_to', 'units', 'unit_price_micros', 'amount_minor'),
+                            f'{where}: usage line', nullable=('tier_to',))
         _require(inv['currency'] == trail['currency'] and inv['timezone'] == trail['timezone'], f'{where}: currency or timezone differs from the trail')
         end_plan = trail['period_end_plan_id']
         _require(isinstance(end_plan, str) and end_plan, f'{where}: period_end_plan_id must be a nonempty string')
         expected_lines = []
         previous_end, covering = None, None
         for seg in trail['subscription_lines']:
+            _integer_fields(seg, ('days', 'days_in_period', 'fee_minor', 'amount_minor'), f'{where}: subscription line')
             start, end = _local_date(seg['from'], f'{where}: segment from'), _local_date(seg['to'], f'{where}: segment to')
             days = (end - start).days
             _require(days == seg['days'] and 0 < days <= seg['days_in_period'], f'{where}: segment days do not match its dates')
@@ -227,6 +258,7 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
             sources = trail['usage_sources'][metric]
             _require(sum(s['units'] for s in sources) == units, f'{where}/{metric}: source units do not sum to billable_units')
             for source in sources:
+                _integer_fields(source, ('line', 'units'), f'{where}/{metric}: source')
                 decision = decision_by_line.get(source['line'])
                 _require(decision is not None and decision['status'] == 'accepted' and decision['event_id'] == source['event_id']
                          and type(source['units']) is int and source['units'] > 0, f'{where}/{metric}: source line {source["line"]} is not an accepted event')

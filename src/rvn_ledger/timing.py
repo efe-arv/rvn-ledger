@@ -193,10 +193,12 @@ def account_bounds(accounts: list, period: dict) -> dict[str, PeriodBounds]:
             raise InputError(f'duplicate account_id {account_id!r}')
         try:
             zone = account.get('timezone')
-            if isinstance(zone, str) and zone not in resolved:
+            if not isinstance(zone, str):
+                raise InputError('timezone must be an IANA zone key')
+            if zone not in resolved:
                 resolved[zone] = resolve_zone(zone)
             bounds[account_id] = period_bounds(period['period_start_local'], period['period_end_local_exclusive'],
-                                               resolved.get(zone, zone), period['late_cutoff_hours_after_period_end'])
+                                               resolved[zone], period['late_cutoff_hours_after_period_end'])
         except InputError as exc:
             raise InputError(f'{account_id}: {exc}') from exc
     return bounds

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+Further output-validation review (billing results and output format unchanged):
+
+- Require unique invoice account ids matching the audit accounts exactly, and
+  require each duplicate to point to its eligible canonical line. A quarantined
+  line with an unreadable ingestion sequence cannot be that target.
+- Check exact integer types throughout invoice/audit numeric fields and manifest
+  counts/totals; equal-valued floats and booleans are rejected by `check` and
+  `explain`, as well as pre-publication reconciliation.
+- Validate complete tariffs through the same parser for configuration and audit,
+  including unused brackets and accounts with zero usage.
+- Reject list/object account time zones as controlled configuration errors
+  (exit 2), before any publication, instead of raising an unhandled TypeError.
+- Clarify the Python runtime and time-zone provenance prerequisites for identical
+  output bytes, and that configuration validation precedes event parsing, not
+  the CLI's file reads.
+
 External review of 2.0.0 (three P2 findings on the verification layer; billing arithmetic unchanged):
 
 - `check` (and the pre-publication reconciliation) now ties the audit trail to the manifest rules: the

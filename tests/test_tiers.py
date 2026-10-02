@@ -79,12 +79,12 @@ class TierTests(unittest.TestCase):
                 price_usage(units, tiers, 'api_calls')
 
     def test_unusable_tariffs_fail_closed(self):
-        from rvn_ledger.tiers import metric_tiers
+        from rvn_ledger.tiers import metric_tiers, tiers_from_document
 
         def plans_with(tiers, metric='api_calls'):
             return {'p': {'plan_id': 'p', 'prices': {'USD': {'subscription_fee_minor': 0, 'metrics': {metric: tiers}}}}}
         good = [{'from_units': 0, 'to_units': 10, 'unit_price_micros': 5}, {'from_units': 10, 'to_units': None, 'unit_price_micros': 4}]
-        metric_tiers(plans_with(good), 'p', 'USD', 'api_calls')
+        self.assertEqual(metric_tiers(plans_with(good), 'p', 'USD', 'api_calls'), tiers_from_document(good))
         bad = [
             [],                                                                                     # no tiers
             [{'from_units': 1, 'to_units': None, 'unit_price_micros': 5}],                          # not starting at 0
@@ -108,6 +108,8 @@ class TierTests(unittest.TestCase):
         for tiers in bad:
             with self.subTest(tiers=tiers), self.assertRaises(InputError):
                 metric_tiers(plans_with(tiers), 'p', 'USD', 'api_calls')
+            with self.subTest(audit_tiers=tiers), self.assertRaises(InputError):
+                tiers_from_document(tiers)
         for plans, plan, currency, metric in [
             (plans_with(good), 'p', 'USD', 'storage_gb_hours'),   # metric without a tariff
             (plans_with(good), 'p', 'EUR', 'api_calls'),          # currency without prices

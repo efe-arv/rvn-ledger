@@ -201,3 +201,19 @@ class ExplainFailureLabelTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()) as stderr:
                 self.assertEqual(main(['run', '--input-dir', str(inputs), '--out', str(blocked)]), 2)
             self.assertTrue(stderr.getvalue().startswith('publication failed: '), stderr.getvalue())
+
+
+class TimezoneConfigurationTests(unittest.TestCase):
+    def test_non_string_timezones_fail_cleanly_before_publication(self):
+        from fixtures import ACCOUNTS
+        for zone in ([], {}, ['UTC'], {'key': 'UTC'}, None, 1, True):
+            with self.subTest(zone=zone), tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+                accounts = [{**ACCOUNTS[0], 'timezone': zone}]
+                inputs = write_fixture(Path(tmp) / 'in', accounts=accounts, raw=b'')
+                out = Path(tmp) / 'out'
+                result = run_cli('run', '--input-dir', inputs, '--out', out)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, '')
+                self.assertTrue(result.stderr.startswith('error:'), result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+                self.assertFalse(out.exists())

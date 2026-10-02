@@ -7,7 +7,8 @@ accounts, the price plans and the billing period — and writes one invoice per
 account, a quarantine report for records it could not bill, an audit trail and a
 run manifest. Money is integer minor units (cents, kuruş) end to end, every
 invoice line can be traced back to the events that produced it, and running it
-twice on the same inputs produces byte-identical files.
+twice on the same inputs in the same runtime and time-zone environment produces
+byte-identical files.
 
 The event stream is assumed to be messy: delivered at least once, out of order,
 sometimes duplicated with a different payload, sometimes late, malformed or for
@@ -151,8 +152,10 @@ the manifest and always add up to the number of lines.
 
 **Reproducibility.** Output contains no clock time, random id, host name or
 absolute path, and ordering is explicit everywhere. Identical input bytes with
-the same code and time-zone database give byte-identical outputs; the manifest
-records both so a difference can be explained.
+the same code, Python version and implementation, and time-zone data/provenance
+give byte-identical outputs. The manifest records these prerequisites so a
+difference can be explained; changing Python versions changes the manifest even
+when the invoices, quarantine and audit bytes stay identical.
 
 ## Tracing a number back to its events
 
@@ -173,8 +176,11 @@ lists the accepted events (id, source line, units) that sum to it, and
   every accepted event is billed exactly once, units are conserved into tiers,
   subtotal = sum of lines, total = subtotal − credit and never negative, every
   amount recomputes from its recorded inputs, every event identity has one
-  canonical line, the manifest rules are a valid period that the segments, the
-  period-end plan and the metrics agree with, and the manifest names the time-zone
+  canonical line and every duplicate points to it, invoice accounts match the
+  audit accounts exactly once, numeric fields are integers (never floats or
+  booleans), all recorded tariffs are valid even with zero usage, the manifest
+  rules are a valid period that the segments, the period-end plan and the metrics
+  agree with, and the manifest names the time-zone
   data of exactly the zones that were billed. `run` performs the same check before
   it writes anything.
 - **`tests/test_hazards.py`** — one end-to-end test per billing rule and input

@@ -51,10 +51,17 @@ def metric_tiers(plans, plan_id: str, currency: str, metric: str) -> tuple[Tier,
         raise InputError(f'plan {plan_id!r} has no price in {currency}')
     where = f'plan {plan_id!r} {currency} {metric}'
     metrics = prices[currency].get('metrics')
-    if not isinstance(metrics, dict) or not isinstance(metrics.get(metric), list) or not metrics[metric]:
+    if not isinstance(metrics, dict):
+        raise InputError(f'{where}: no tariff (nonempty list of tiers) is defined')
+    return tiers_from_document(metrics.get(metric), where)
+
+
+def tiers_from_document(entries, where: str = 'audit tariff') -> tuple[Tier, ...]:
+    """Validate a complete tariff, whether it comes from configuration or the audit trail."""
+    if not isinstance(entries, list) or not entries:
         raise InputError(f'{where}: no tariff (nonempty list of tiers) is defined')
     tiers = []
-    for entry in metrics[metric]:
+    for entry in entries:
         if not isinstance(entry, dict):
             raise InputError(f'{where}: every tier must be an object')
         lower = _count(entry.get('from_units'), f'{where}: from_units')
@@ -100,8 +107,3 @@ def price_usage(units: int, tiers: tuple[Tier, ...], metric: str) -> list[UsageL
     return [UsageLine(metric, tier.from_units, tier.to_units, take, tier.unit_price_micros,
                       usage_amount(take, tier.unit_price_micros))
             for tier, take in split_units(units, tiers)]
-
-
-def tiers_from_document(entries) -> tuple[Tier, ...]:
-    """Rebuild a tariff recorded in audit.json (used by reconciliation)."""
-    return tuple(Tier(e['from_units'], e['to_units'], e['unit_price_micros']) for e in entries)
