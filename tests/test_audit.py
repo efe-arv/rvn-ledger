@@ -2,9 +2,11 @@ import copy
 import json
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
-from fixtures import EXPECTED_INVOICES, EXPECTED_QUARANTINE, INPUT_NAMES, rewrite_manifest, run_cli, run_fixture, SCRATCH, write_fixture
+from fixtures import (ACCOUNTS, EXPECTED_INVOICES, EXPECTED_QUARANTINE, INPUT_NAMES, PERIOD, PLANS, RAW_EVENTS, event, publish_run,
+                      raw_lines, rewrite_manifest, run_cli, run_fixture, SCRATCH, write_fixture)
 
 
 class AuditTests(unittest.TestCase):
@@ -277,3 +279,216 @@ class ManifestInputMetadataTests(unittest.TestCase):
                         result = run_cli(*command)
                         self.assertNotEqual(result.returncode, 0)
                         self.assertNotIn('Traceback', result.stderr)
+
+
+class PeriodAndIdentityConsistencyTests(unittest.TestCase):
+    """External review (2026-10-02) F1 and F2: a document set that contradicts its own manifest rules,
+    or bills one event identity through two canonical lines, must fail reconciliation and `check`.
+    Every tamper below is re-hashed through `publish`, so only reconciliation can refuse it."""
+
+    def rejected(self, mutate, case, cli=False):
+        from rvn_ledger.audit import AuditError, reconcile
+        run = run_fixture()
+        mutate(run)
+        with self.subTest(case=case):
+            with self.assertRaises(AuditError):
+                reconcile(run.invoices, run.quarantine, run.audit, run.manifest)
+            if cli:
+                with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+                    publish_run(run, tmp)
+                    result = run_cli('check', '--out', tmp, '--json')
+                    self.assertEqual(result.returncode, 2, (result.stdout, result.stderr))
+                    self.assertNotIn('Traceback', result.stderr)
+                    self.assertIn('check failed', result.stderr)
+                    self.assertEqual(result.stdout, '')
+
+    # ---- F1: the audit period, the manifest rules and the trail must describe one billing period ----
+
+    def test_subscription_segments_must_lie_inside_the_manifest_period(self):
+        def shift(run, days):
+            for trail in run.audit['invoices'].values():
+                for seg in trail['subscription_lines']:
+                    for key in ('from', 'to'):
+                        seg[key] = (date.fromisoformat(seg[key]) + timedelta(days=days)).isoformat()
+        self.rejected(lambda r: shift(r, 365), 'review example 1: segments one year late', cli=True)
+        self.rejected(lambda r: shift(r, -365), 'segments one year early')
+        self.rejected(lambda r: shift(r, 1), 'segments end one day after the period')
+        self.rejected(lambda r: shift(r, -1), 'segments start one day before the period')
+
+    def test_manifest_rules_must_be_a_valid_period_that_agrees_with_the_documents(self):
+        def rules(run):
+            return run.manifest['rules']
+        cases = [
+            ('invented metric', lambda r: rules(r).__setitem__('metrics', ['invented'])),
+            ('metrics reordered', lambda r: rules(r).__setitem__('metrics', ['storage_gb_hours', 'api_calls'])),
+            ('metric dropped', lambda r: rules(r).__setitem__('metrics', ['api_calls'])),
+            ('metric repeated', lambda r: rules(r).__setitem__('metrics', ['api_calls', 'storage_gb_hours', 'api_calls'])),
+            ('empty metrics', lambda r: rules(r).__setitem__('metrics', [])),
+            ('days_in_period 1', lambda r: rules(r).__setitem__('days_in_period', 1)),
+            ('days_in_period 31', lambda r: rules(r).__setitem__('days_in_period', 31)),
+            ('period ends before it starts', lambda r: rules(r).__setitem__('period_end_local_exclusive', '1900-01-01')),
+            ('non-canonical period start', lambda r: rules(r).__setitem__('period_start_local', '20260901')),
+            ('period start not a string', lambda r: rules(r).__setitem__('period_start_local', None)),
+            ('negative late cutoff', lambda r: rules(r).__setitem__('late_cutoff_hours_after_period_end', -1)),
+            ('boolean late cutoff', lambda r: rules(r).__setitem__('late_cutoff_hours_after_period_end', True)),
+            ('missing late cutoff', lambda r: rules(r).pop('late_cutoff_hours_after_period_end')),
+            ('empty rules source', lambda r: rules(r).__setitem__('source', '')),
+        ]
+        for case, mutate in cases:
+            self.rejected(mutate, case, cli=case in ('invented metric', 'days_in_period 1', 'metrics reordered'))
+
+        def contradictory(run):   # the review's second example, all three contradictions at once
+            rules(run).update(metrics=['invented'], days_in_period=1, period_end_local_exclusive='1900-01-01')
+        self.rejected(contradictory, 'review example 2: contradictory manifest rules', cli=True)
+
+    def test_segment_denominator_end_plan_and_tariff_plan_must_agree_with_the_period(self):
+        from rvn_ledger.money import subscription_formula
+
+        def doubled_fee_over_doubled_denominator(run):
+            # fee * days / denominator is unchanged, so the arithmetic recomputes; only the denominator rule can see it.
+            seg = run.audit['invoices']['acct_c']['subscription_lines'][0]
+            seg.update(fee_minor=2 * seg['fee_minor'], days_in_period=60)
+            seg['formula'] = subscription_formula(seg['fee_minor'], seg['days'], 60, seg['amount_minor'])
+
+        def end_plan_swapped(run):
+            trail = run.audit['invoices']['acct_b']
+            trail['period_end_plan_id'] = 'starter'
+            for tariff in trail['usage_tariffs'].values():
+                tariff['plan_id'] = 'starter'
+            for line in trail['usage_lines']:
+                line['plan_id'] = 'starter'
+
+        def tariff_plan_swapped(run):
+            trail = run.audit['invoices']['acct_b']
+            for tariff in trail['usage_tariffs'].values():
+                tariff['plan_id'] = 'starter'
+            for line in trail['usage_lines']:
+                line['plan_id'] = 'starter'
+
+        def overlapping(run):
+            seg = run.audit['invoices']['acct_b']['subscription_lines'][0]
+            seg.update({'from': '2026-09-02', 'to': '2026-09-18'})          # still 16 days, overlaps the growth segment
+
+        def unordered(run):
+            trail = run.audit['invoices']['acct_b']
+            trail['subscription_lines'].reverse()
+            run.invoices[1]['lines'][:2] = reversed(run.invoices[1]['lines'][:2])
+
+        def empty_end_plan(run):
+            trail = run.audit['invoices']['acct_c']
+            trail['period_end_plan_id'] = ''
+            for tariff in trail['usage_tariffs'].values():
+                tariff['plan_id'] = ''
+
+        self.rejected(doubled_fee_over_doubled_denominator, 'segment denominator differs from the manifest', cli=True)
+        self.rejected(end_plan_swapped, 'period-end plan is not the plan covering the final day', cli=True)
+        self.rejected(tariff_plan_swapped, 'usage priced on another plan than the period-end plan')
+        self.rejected(overlapping, 'overlapping segments')
+        self.rejected(unordered, 'segments out of chronological order')
+        self.rejected(empty_end_plan, 'empty period-end plan')
+
+    def test_final_local_day_must_be_covered_by_the_period_end_plan_segment(self):
+        from rvn_ledger.money import subscription_formula
+
+        def uncover(run):
+            # A fully consistent 29-day segment (amount, credit and totals recomputed) that stops one day short
+            # of the period end: every arithmetic check passes, only the coverage rule can refuse it.
+            trail, inv = run.audit['invoices']['acct_c'], run.invoices[2]
+            self.assertEqual(inv['account_id'], 'acct_c')
+            trail['subscription_lines'][0].update(to='2026-09-30', days=29, amount_minor=26970,
+                                                  formula=subscription_formula(27900, 29, 30, 26970))
+            inv['lines'][0].update(days=29, amount_minor=26970)
+            inv.update(subtotal_minor=26970, credit_applied_minor=26970, credit_remaining_minor=73030, total_minor=0)
+            trail['credit'].update(applied_minor=26970, remaining_minor=73030)
+            run.manifest['totals_by_currency']['EUR'].update(subtotal_minor=26970, credit_applied_minor=26970, total_minor=0)
+        self.rejected(uncover, 'final local day uncovered', cli=True)
+
+    # ---- F2: one event identity, one canonical line ----
+
+    def test_two_canonical_lines_sharing_one_event_identity_are_rejected(self):
+        def rename(run, old, new):
+            for decision in run.audit['decisions']:
+                if decision['event_id'] == old:
+                    decision['event_id'] = new
+            for entry in run.quarantine:
+                if entry['event_id'] == old:
+                    entry['event_id'] = new
+            for trail in run.audit['invoices'].values():
+                for sources in trail['usage_sources'].values():
+                    for source in sources:
+                        if source['event_id'] == old:
+                            source['event_id'] = new
+
+        def two_accepted(run):      # the review's repro: lines 1 and 2 (plus line 2's duplicate) all carry 'a1'
+            decisions = run.audit['decisions']
+            self.assertEqual([(d['line'], d['event_id'], d['status']) for d in decisions[:3]],
+                             [(1, 'a1', 'accepted'), (2, 'a2', 'accepted'), (3, 'a2', 'duplicate_ignored')])
+            rename(run, 'a2', 'a1')
+        self.rejected(two_accepted, 'review F2: two accepted lines bill one identity', cli=True)
+        self.rejected(lambda r: rename(r, 'a4', 'a1'), 'an excluded line shares an accepted identity')
+        self.rejected(lambda r: rename(r, 'a7', 'a1'), 'a quarantined winner shares an accepted identity')
+        self.rejected(lambda r: rename(r, 'b1', 'd1'), 'two accepted lines of different accounts share one identity', cli=True)
+
+    def test_accepted_identity_must_be_a_nonempty_string(self):
+        for bad in ('', None, 7):
+            def mutate(run, bad=bad):
+                run.audit['decisions'][0]['event_id'] = bad
+                run.audit['invoices']['acct_a']['usage_sources']['api_calls'][0]['event_id'] = bad
+            self.rejected(mutate, f'accepted identity {bad!r}', cli=bad == '')
+
+    def test_a_line_without_a_readable_sequence_may_share_an_identity_with_a_canonical_line(self):
+        # Guard against a false positive: an invalid_ingest_seq line never entered deduplication, so it is
+        # quarantined under its own identity and is not a second canonical copy of the accepted event.
+        from rvn_ledger.audit import reconcile
+        from rvn_ledger.pipeline import run_ledger
+        extra = raw_lines([event('a1', '1', 'acct_a', units=3), event('a1', None, 'acct_a', units=3)])
+        run = run_ledger({'events.jsonl': RAW_EVENTS + extra, 'accounts.json': json.dumps(ACCOUNTS).encode(),
+                          'plans.json': json.dumps(PLANS).encode(), 'period.json': json.dumps(PERIOD).encode()})
+        self.assertEqual(run.quarantine[-2:], [{'event_id': 'a1', 'reason': 'invalid_ingest_seq'}] * 2)
+        self.assertEqual(run.manifest['counts']['accepted'], 8)
+        reconcile(run.invoices, run.quarantine, run.audit, run.manifest)
+        self.assertEqual([{**inv, 'quarantined_count': None} for inv in run.invoices], [{**inv, 'quarantined_count': None} for inv in EXPECTED_INVOICES])
+        self.assertEqual([inv['quarantined_count'] for inv in run.invoices], [4, 1, 1, 1])
+
+
+class ManifestTimezoneProvenanceTests(unittest.TestCase):
+    """External review (2026-10-02) F3, verification side: the manifest must carry a provenance record for
+    exactly the zones the invoices were billed in, and `check` refuses a manifest that does not."""
+
+    def rejected(self, mutate, case):
+        from rvn_ledger.audit import AuditError, reconcile
+        run = run_fixture()
+        mutate(run.manifest)
+        with self.subTest(case=case), self.assertRaises(AuditError):
+            reconcile(run.invoices, run.quarantine, run.audit, run.manifest)
+
+    def test_provenance_must_name_exactly_the_invoiced_zones_with_valid_records(self):
+        def zones(m):
+            return m['versions']['timezones']
+        self.rejected(lambda m: m['versions'].pop('timezones'), 'missing provenance')
+        self.rejected(lambda m: m['versions'].__setitem__('timezones', []), 'provenance is a list')
+        self.rejected(lambda m: m['versions'].__setitem__('timezones', {}), 'empty provenance')
+        self.rejected(lambda m: zones(m).pop('Europe/Istanbul'), 'invoiced zone missing')
+        self.rejected(lambda m: zones(m).__setitem__('Mars/Olympus', dict(zones(m)['UTC'])), 'zone that no invoice uses')
+        self.rejected(lambda m: zones(m)['UTC'].__setitem__('sha256', 'abc'), 'short hash')
+        self.rejected(lambda m: zones(m)['UTC'].__setitem__('sha256', None), 'null hash on a known source')
+        self.rejected(lambda m: zones(m)['UTC'].__setitem__('source', 'guess'), 'unknown source kind')
+        self.rejected(lambda m: zones(m)['UTC'].__setitem__('version', 2026), 'version not a string')
+        self.rejected(lambda m: zones(m)['UTC'].pop('source'), 'record without source')
+        self.rejected(lambda m: zones(m)['UTC'].__setitem__('path', '/usr/share/zoneinfo/UTC'), 'record with an extra field')
+        self.rejected(lambda m: zones(m).__setitem__('UTC', None), 'record is null')
+
+    def test_unknown_source_is_an_honest_record_only_without_a_hash(self):
+        from rvn_ledger.audit import AuditError, reconcile
+        from rvn_ledger.timing import provenance_summary
+        run = run_fixture()
+        run.manifest['versions']['timezones']['UTC'] = {'source': 'unknown', 'version': '', 'sha256': None}
+        run.manifest['versions']['tzdata'] = provenance_summary(run.manifest['versions']['timezones'])
+        self.assertTrue(run.manifest['versions']['tzdata'].startswith('mixed: '))
+        self.assertTrue(run.manifest['versions']['tzdata'].endswith(', unknown'))
+        reconcile(run.invoices, run.quarantine, run.audit, run.manifest)
+        with self.assertRaises(AuditError):   # the one-line summary must agree with the records
+            reconcile(run.invoices, run.quarantine, run.audit, {**run.manifest, 'versions': {**run.manifest['versions'], 'tzdata': 'system 2026c'}})
+        run.manifest['versions']['timezones']['UTC']['sha256'] = 'a' * 64
+        with self.assertRaises(AuditError):
+            reconcile(run.invoices, run.quarantine, run.audit, run.manifest)

@@ -50,7 +50,6 @@ def generate_inputs(directory, count):
 def worker(data, out, trace):
     """Measure read -> bill -> reconcile -> publish -> checked read in a fresh process."""
     from rvn_ledger.cli import main as ledger_main
-    from rvn_ledger.pipeline import tzdata_version
     captured = io.StringIO()
     if trace:
         tracemalloc.start()
@@ -68,7 +67,7 @@ def worker(data, out, trace):
         raise RuntimeError('benchmark fixture did not accept every event')
     return {'seconds': round(seconds, 6), 'peak_python_mib': round(peak / 1024**2, 3) if trace else None,
             'events': counts['raw'], 'output_bytes': sum(p.stat().st_size for p in out.iterdir()),
-            'tzdata': tzdata_version(), 'source_sha256': source_digest()}
+            'tzdata': json.loads((out / 'manifest.json').read_bytes())['versions']['tzdata'], 'source_sha256': source_digest()}
 
 
 def measure(args):

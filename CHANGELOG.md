@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+External review of 2.0.0 (three P2 findings on the verification layer; billing arithmetic unchanged):
+
+- `check` (and the pre-publication reconciliation) now ties the audit trail to the manifest rules: the
+  rules must be a valid billing period read through the same strict parsers as `period.json`; every
+  subscription segment must lie inside it, use its `days_in_period`, be chronological and non-overlapping;
+  `period_end_plan_id` must be the plan covering the final local day and the plan every usage line was
+  priced on; `billable_units` must list the manifest metrics in their order. Segments moved outside the
+  period or contradictory manifest rules were previously accepted when the arithmetic still recomputed.
+- `check` now requires every event identity to have exactly one canonical line (a line that never entered
+  deduplication because its `ingest_seq` was unreadable is exempt) and every accepted event to carry a
+  nonempty string identity. Two accepted lines billing the same `event_id` were previously accepted.
+- The manifest records, per billed time zone, where zoneinfo actually resolved it from (`system` TZPATH
+  file or the `tzdata` package), that source's version and the SHA-256 of the TZif bytes
+  (`versions.timezones`). `versions.tzdata` is now a summary of those records and reads `mixed: ...` when
+  zones came from different databases; it no longer assumes that the database holding the first `UTC` file
+  on TZPATH served every zone. A system version is recorded as `2026c`, no longer `version 2026c`. `check`
+  requires the provenance to name exactly the invoiced zones.
+- Output sets published by 2.0.0 fail `check` because their manifest has no `versions.timezones`; rerun
+  `run` to republish them. `invoices.json`, `quarantine.json` and `audit.json` are byte-identical to 2.0.0.
+- `pipeline.tzdata_version` now takes the zone keys to summarise; `scripts/benchmark.py` reports the
+  manifest's own summary.
+
 ## 2.0.0 — 2026-10-02
 
 - `main` is now the command-line tool only: `run`, `check`, `explain`. Excel support moved to the

@@ -10,7 +10,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fixtures import ACCOUNTS, CLI_ARGS, DATA, EXPECTED_INVOICES, EXPECTED_QUARANTINE, PERIOD, PLANS, RAW_EVENTS, ROOT, run_cli, snapshot, write_fixture
+from fixtures import (ACCOUNTS, CLI_ARGS, DATA, EXPECTED_INVOICES, EXPECTED_QUARANTINE, PERIOD, PLANS, RAW_EVENTS, ROOT, SCRATCH, run_cli,
+                      run_fixture, snapshot, write_fixture)
 
 
 class PipelineTests(unittest.TestCase):
@@ -198,3 +199,76 @@ class RealDataTests(unittest.TestCase):
                 self.assertGreaterEqual(inv['total_minor'], 0)
             reconcile(invoices, quarantine, audit, manifest)
             self.assertEqual(run_cli('check', '--out', out1).returncode, 0)
+
+
+class TimezoneProvenanceTests(unittest.TestCase):
+    """External review (2026-10-02) F3: the manifest must name the TZif data each billed zone actually
+    resolved against, per zone, instead of assuming the database that holds the first UTC file on TZPATH."""
+
+    @staticmethod
+    def expected_source(key):
+        # Independent re-derivation of zoneinfo's lookup order: a TZPATH file first, else the tzdata package.
+        import zoneinfo
+        for root in zoneinfo.TZPATH:
+            path = Path(root) / key
+            if path.is_file():
+                return 'system', hashlib.sha256(path.read_bytes()).hexdigest()
+        from importlib import resources
+        package, _, name = ('tzdata.zoneinfo.' + key.replace('/', '.')).rpartition('.')
+        return 'tzdata package', hashlib.sha256(resources.files(package).joinpath(name).read_bytes()).hexdigest()
+
+    def test_manifest_records_source_and_hash_of_every_billed_zone(self):
+        run = run_fixture()
+        versions = run.manifest['versions']
+        self.assertEqual(list(versions), ['python', 'implementation', 'tzdata', 'timezones', 'code_sha256'])
+        zones = versions['timezones']
+        self.assertEqual(list(zones), sorted({a['timezone'] for a in ACCOUNTS}))
+        summaries = set()
+        for key, record in zones.items():
+            with self.subTest(zone=key):
+                self.assertEqual(set(record), {'source', 'version', 'sha256'})
+                self.assertEqual((record['source'], record['sha256']), self.expected_source(key))
+                self.assertIsInstance(record['version'], str)
+                summaries.add(f"{record['source']} {record['version']}")
+        # The one-line summary stays as before when every zone came from one database, and says so otherwise.
+        self.assertEqual(versions['tzdata'], summaries.pop() if len(summaries) == 1 else 'mixed: ' + ', '.join(sorted(summaries)))
+
+    @unittest.skipUnless(importlib.util.find_spec('tzdata'), 'optional tzdata package absent; cannot build a mixed-source run')
+    def test_tzpath_file_shadowing_a_zone_is_recorded_as_that_zone_s_actual_source(self):
+        # The review's repro: a TZPATH tree holding only Europe/Istanbul, filled with UTC bytes. zoneinfo bills
+        # Istanbul accounts on those bytes, so the manifest must say so instead of naming the package for all zones.
+        from importlib import resources
+        utc_bytes = resources.files('tzdata.zoneinfo').joinpath('UTC').read_bytes()
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            tree = Path(tmp) / 'tz'
+            (tree / 'Europe').mkdir(parents=True)
+            (tree / 'Europe' / 'Istanbul').write_bytes(utc_bytes)
+            inputs = write_fixture(Path(tmp) / 'in')
+            out = Path(tmp) / 'out'
+            result = run_cli('run', '--input-dir', inputs, '--out', out, env={**os.environ, 'PYTHONTZPATH': str(tree)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads((out / 'manifest.json').read_bytes())
+            zones = manifest['versions']['timezones']
+            self.assertEqual(zones['Europe/Istanbul'],
+                             {'source': 'system', 'version': '(version file absent)', 'sha256': hashlib.sha256(utc_bytes).hexdigest()})
+            for key in ('America/New_York', 'Asia/Tokyo', 'UTC'):
+                self.assertEqual(zones[key]['source'], 'tzdata package', key)
+            self.assertTrue(manifest['versions']['tzdata'].startswith('mixed: '), manifest['versions']['tzdata'])
+            # The billing really did follow the shadowing file: with Istanbul at UTC the one-second-late event is in time.
+            self.assertEqual(manifest['counts']['excluded_late'], 0)
+            self.assertNotEqual(json.loads((out / 'invoices.json').read_bytes()), EXPECTED_INVOICES)
+            self.assertEqual(run_cli('check', '--out', out).returncode, 0)
+
+    def test_tzdata_version_summarises_only_the_zones_it_is_given(self):
+        from rvn_ledger.pipeline import tzdata_version
+        from rvn_ledger.timing import timezone_provenance
+        provenance = timezone_provenance(['UTC', 'Europe/Istanbul', 'UTC'])
+        self.assertEqual(list(provenance), ['Europe/Istanbul', 'UTC'])
+        self.assertEqual(tzdata_version(['UTC']), f"{provenance['UTC']['source']} {provenance['UTC']['version']}")
+        with self.assertRaises(TypeError):
+            tzdata_version()
+        # Only usable IANA keys are resolved: a host-dependent key or a path-shaped key is never read, let alone hashed.
+        for key in ('localtime', 'Factory', '../../../etc/hostname', '/etc/hostname', 'Mars/Olympus', ''):
+            with self.subTest(key=key):
+                self.assertEqual(timezone_provenance([key]), {key: {'source': 'unknown', 'version': '', 'sha256': None}})
+        self.assertEqual(tzdata_version(['/etc/hostname']), 'unknown')

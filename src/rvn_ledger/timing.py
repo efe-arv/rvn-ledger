@@ -1,8 +1,10 @@
 """Account-local half-open periods, with elapsed-time late-arrival limits."""
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from functools import lru_cache
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
+from pathlib import Path
+from zoneinfo import TZPATH, ZoneInfo, ZoneInfoNotFoundError, available_timezones
 from .inputs import InputError, local_date
 from .validation import ValidatedEvent
 
@@ -11,6 +13,9 @@ PERIOD_KEYS = ('period_start_local', 'period_end_local_exclusive', 'late_cutoff_
 # host's own zone, 'posixrules' and 'Factory' are build artefacts. Billing on them would
 # depend on the server, so they are unusable configuration even where ZoneInfo accepts them.
 HOST_DEPENDENT_ZONE_KEYS = frozenset({'localtime', 'posixrules', 'Factory'})
+# Where a zone's TZif bytes can come from, in zoneinfo's own lookup order: a file under one of the
+# TZPATH roots shadows the tzdata package even when it is the only file in that root (review F3).
+ZONE_SOURCES = ('system', 'tzdata package', 'unknown')
 
 
 @lru_cache(maxsize=1)
@@ -44,6 +49,59 @@ def period_bounds(start_local: str, end_local: str, zone: str, late_hours: int) 
         # OSError: a key naming a directory of the tzdata tree (e.g. 'America') raises
         # IsADirectoryError rather than ZoneInfoNotFoundError on this interpreter.
         raise InputError('invalid local period, timezone, or late cutoff') from exc
+
+
+def _system_version(root: Path) -> str:
+    index = root / 'tzdata.zi'
+    first = index.read_text(errors='replace').splitlines()[:1] if index.is_file() else []
+    return first[0].lstrip('# ').strip().removeprefix('version ').strip() if first else '(version file absent)'
+
+
+def _package_zone(key: str) -> bytes:
+    # Mirrors zoneinfo's package fallback: each directory of the key is a subpackage of tzdata.zoneinfo.
+    from importlib import resources
+    package, _, resource = ('tzdata.zoneinfo.' + key.replace('/', '.')).rpartition('.')
+    return resources.files(package).joinpath(resource).read_bytes()
+
+
+def zone_provenance(key: str) -> dict:
+    """The source kind, data version and SHA-256 of the exact TZif bytes zoneinfo resolves `key` against.
+
+    The record never carries a host path, so it is reproducible across machines holding the same
+    data; two runs whose records differ were billed on different zone rules even if the package
+    version looks the same. A key found nowhere is recorded as unknown rather than guessed, and
+    only a usable IANA key (the set `period_bounds` accepts) is ever read: no path-shaped or
+    host-dependent key reaches the file system.
+    """
+    if not isinstance(key, str) or key not in iana_zone_keys():
+        return {'source': 'unknown', 'version': '', 'sha256': None}
+    for root in TZPATH:
+        path = Path(root) / key
+        if path.is_file():
+            return {'source': 'system', 'version': _system_version(Path(root)), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    try:
+        data = _package_zone(key)
+    except Exception:  # noqa: BLE001 - no TZPATH file and no package resource: record that honestly
+        return {'source': 'unknown', 'version': '', 'sha256': None}
+    try:
+        from importlib.metadata import version
+        package_version = version('tzdata')
+    except Exception:  # noqa: BLE001 - resources present without distribution metadata
+        package_version = '(version metadata absent)'
+    return {'source': 'tzdata package', 'version': package_version, 'sha256': hashlib.sha256(data).hexdigest()}
+
+
+def timezone_provenance(zones) -> dict:
+    """One provenance record per distinct zone key, in sorted key order (manifest `versions.timezones`)."""
+    return {key: zone_provenance(key) for key in sorted(set(zones))}
+
+
+def provenance_summary(provenance: dict) -> str:
+    """One line for `versions.tzdata`: the single database every zone came from, or an explicit mix."""
+    summaries = sorted({f"{record['source']} {record['version']}".strip() for record in provenance.values()})
+    if not summaries:
+        return 'unknown'
+    return summaries[0] if len(summaries) == 1 else 'mixed: ' + ', '.join(summaries)
 
 
 def account_bounds(accounts: list, period: dict) -> dict[str, PeriodBounds]:
