@@ -196,6 +196,7 @@ class ExplainAccountTests(unittest.TestCase):
                 self.assertEqual(main(['explain', '--out', str(out), '--account', 'acct_a']), 0)
             text = stdout.getvalue()
             self.assertTrue(text.startswith('acct_a  TRY'), text)
+            self.assertNotIn(' 1 events,', text)
             self.assertIn(f"total {invoice['total_minor']}", text)
             self.assertEqual(text.count('\n  subscription '), len([l for l in invoice['lines'] if l['kind'] == 'subscription']))
             self.assertEqual(text.count('\n  usage '), len([l for l in invoice['lines'] if l['kind'] == 'usage']))
@@ -211,6 +212,9 @@ class ExplainAccountTests(unittest.TestCase):
                 self.assertTrue(stderr.getvalue().startswith('error: '), stderr.getvalue())
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parse_args(['explain', '--account', 'acct_a', '--event-id', 'x'])   # one selector at a time
+            with contextlib.redirect_stderr(io.StringIO()) as stderr:   # refused, not silently ignored
+                self.assertEqual(main(['explain', '--out', str(out), '--account', 'acct_a', '--events', str(out / 'audit.json')]), 2)
+            self.assertTrue(stderr.getvalue().startswith('error: --events applies to'), stderr.getvalue())
 
 
 class ExplainFailureLabelTests(unittest.TestCase):

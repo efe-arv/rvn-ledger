@@ -122,7 +122,7 @@ def _account_lines(r):
                  f"remaining {inv['credit_remaining_minor']})  total {inv['total_minor']}")
     for metric, units in inv['billable_units'].items():
         rows = r['usage_sources'][metric]
-        lines.append(f"  sources {metric}: {len(rows)} events, {units} units" +
+        lines.append(f"  sources {metric}: {len(rows)} event{'' if len(rows) == 1 else 's'}, {units} units" +
                      ''.join(f"\n    line {s['line']} {json.dumps(s['event_id'], ensure_ascii=True)} {s['units']}" for s in rows))
     quarantined = r['quarantined_lines']
     lines.append(f"  quarantined lines: {', '.join(map(str, quarantined)) if quarantined else 'none'}")
@@ -133,6 +133,8 @@ def command_explain(args):
     from .diagnostics import explain, explain_account, load_verified
     data = load_verified(args.out)
     if args.account is not None:
+        if args.events is not None:
+            raise InputError('--events applies to the quarantine list, --event-id and --line, not --account')
         result = explain_account(data, args.account)
         return _summary(args, result, '\n'.join(_account_lines(result)))
     result = explain(data, event_id=args.event_id, line=args.line, events=args.events)
