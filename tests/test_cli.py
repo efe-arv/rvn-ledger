@@ -158,6 +158,61 @@ class SafeHumanDisplayTests(unittest.TestCase):
         self.assertEqual(display('bad\udcff', io.TextIOWrapper(io.BytesIO(), encoding='utf-8')), 'bad\\udcff')  # undecodable file name byte
 
 
+class ExplainAccountTests(unittest.TestCase):
+    """`explain --account` shows one invoice with the trail behind every line, from the published files only."""
+
+    def published(self, tmp):
+        inputs = write_fixture(Path(tmp) / 'in')
+        out = Path(tmp) / 'out'
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(['run', '--input-dir', str(inputs), '--out', str(out)]), 0)
+        return out
+
+    def test_account_report_matches_the_published_invoice_and_trail(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            out = self.published(tmp)
+            invoices = json.loads((out / 'invoices.json').read_bytes())
+            audit = json.loads((out / 'audit.json').read_bytes())
+            for invoice in invoices:
+                account = invoice['account_id']
+                with self.subTest(account=account), contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    self.assertEqual(main(['explain', '--out', str(out), '--account', account, '--json']), 0)
+                    report = json.loads(stdout.getvalue())
+                self.assertEqual(report['invoice'], invoice)
+                self.assertEqual(report['usage_sources'], audit['invoices'][account]['usage_sources'])
+                self.assertEqual(report['credit']['credit_minor'] - report['credit']['applied_minor'], invoice['credit_remaining_minor'])
+                for metric, units in invoice['billable_units'].items():
+                    self.assertEqual(sum(s['units'] for s in report['usage_sources'][metric]), units)
+                    self.assertEqual(sum(u['units'] for u in report['usage_lines'] if u['metric'] == metric), units)
+                self.assertEqual(sum(s['amount_minor'] for s in report['subscription_lines'])
+                                 + sum(u['amount_minor'] for u in report['usage_lines']), invoice['subtotal_minor'])
+                self.assertTrue(all(u['plan_id'] == report['period_end_plan_id'] for u in report['usage_lines']))
+
+    def test_human_report_names_every_line_and_the_total(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            out = self.published(tmp)
+            invoice = next(i for i in json.loads((out / 'invoices.json').read_bytes()) if i['account_id'] == 'acct_a')
+            with contextlib.redirect_stdout(io.StringIO()) as stdout:
+                self.assertEqual(main(['explain', '--out', str(out), '--account', 'acct_a']), 0)
+            text = stdout.getvalue()
+            self.assertTrue(text.startswith('acct_a  TRY'), text)
+            self.assertIn(f"total {invoice['total_minor']}", text)
+            self.assertEqual(text.count('\n  subscription '), len([l for l in invoice['lines'] if l['kind'] == 'subscription']))
+            self.assertEqual(text.count('\n  usage '), len([l for l in invoice['lines'] if l['kind'] == 'usage']))
+            for line in invoice['lines']:
+                self.assertIn(f"= {line['amount_minor']}", text)
+
+    def test_unknown_or_empty_account_is_an_input_error(self):
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as tmp:
+            out = self.published(tmp)
+            for account in ('acct_zz', ''):
+                with self.subTest(account=account), contextlib.redirect_stderr(io.StringIO()) as stderr:
+                    self.assertEqual(main(['explain', '--out', str(out), '--account', account]), 2)
+                self.assertTrue(stderr.getvalue().startswith('error: '), stderr.getvalue())
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                parse_args(['explain', '--account', 'acct_a', '--event-id', 'x'])   # one selector at a time
+
+
 class ExplainFailureLabelTests(unittest.TestCase):
     """`explain` never publishes: its failures must not be reported as a failed publication."""
 

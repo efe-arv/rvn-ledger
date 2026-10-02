@@ -58,6 +58,8 @@ unchanged by them; the manifest gained `versions.timezones`.
   error, no longer read as an open bracket. The supplied data and the demo already write the key.
 - The benchmark receipt (`docs/benchmark-results.json`) is regenerated on the released sources; the
   working-set and profile figures in ENGINEERING.md are labelled as separate measurements.
+- `explain --account ID` prints one account's invoice with the formula behind every line, the source
+  events per metric, the credit arithmetic and the total, from the published files only (`--json` too).
 
 - Require unique invoice account ids matching the audit accounts exactly, and
   require each duplicate to point to its eligible canonical line. A quarantined

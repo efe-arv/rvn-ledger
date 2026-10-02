@@ -163,6 +163,7 @@ when the invoices, quarantine and audit bytes stay identical.
 rvn-ledger explain --out out                       # every quarantined record and why
 rvn-ledger explain --out out --event-id ev_123     # one event, including its duplicate copies
 rvn-ledger explain --out out --line 42 --events data/events.jsonl   # one source line, with its original field values
+rvn-ledger explain --out out --account acct_013   # one invoice: every line's formula, its source events, the credit and the total
 ```
 
 For an invoice line, `audit.json` → `invoices.<account>.usage_sources.<metric>`

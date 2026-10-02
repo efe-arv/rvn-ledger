@@ -63,6 +63,10 @@ def exercise(cli, directory):
     require(records['count'] == 3 and records['source_values_verified'], 'quarantine explanations differ')
     copies = invoke('explain', '--out', out, '--event-id', 'api-first')['records']
     require(len(copies) == 2 and copies[1]['canonical_line'] == 1, 'global canonical selection changed')
+    account = invoke('explain', '--out', out, '--account', 'demo-try')
+    expected_invoice = next(i for i in json.loads((demo / 'expected-invoices.json').read_bytes()) if i['account_id'] == 'demo-try')
+    require(account['invoice'] == expected_invoice and sum(s['units'] for s in account['usage_sources']['api_calls']) == 12,
+            'account explanation differs from the hand-derived invoice')
 
     # A UTF-8 BOM in front of the demo must not hand `api-first` to its conflicting later copy; hashes cover the raw bytes.
     marked, marked_out = directory / 'inputs-bom', directory / 'out-bom'
