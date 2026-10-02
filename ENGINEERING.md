@@ -78,31 +78,35 @@ total.
 
 The supplied month has 1,078 events, so 1000× is about one million. That was
 measured rather than estimated (`scripts/benchmark.py`, results in
-[docs/benchmark-results.json](docs/benchmark-results.json); Windows 11,
-CPython 3.12, synthetic valid events for two accounts, full `run` including
-reconciliation, publishing and the post-publish check):
+[docs/benchmark-results.json](docs/benchmark-results.json), which records the
+SHA-256 of the package sources it was measured on; Windows 11, CPython 3.12,
+synthetic valid events for two accounts, full `run` including reconciliation,
+publishing and the post-publish check):
 
 | Scale | Events | Time (median of 3) | Per event | Peak Python memory | Output on disk |
 |---|---:|---:|---:|---:|---:|
-| 1× | 1,000 | 0.08 s | 78 µs | 3 MiB | 0.3 MiB |
-| 10× | 10,000 | 0.54 s | 54 µs | 22 MiB | 2.9 MiB |
-| 100× | 100,000 | 5.4 s | 54 µs | 216 MiB | 29 MiB |
-| 1000× | 1,000,000 | 78 s | 78 µs | 2.1 GiB | 296 MiB |
+| 1× | 1,000 | 0.09 s | 88 µs | 3 MiB | 0.3 MiB |
+| 10× | 10,000 | 0.55 s | 55 µs | 22 MiB | 2.9 MiB |
+| 100× | 100,000 | 6.8 s | 68 µs | 216 MiB | 29 MiB |
+| 1000× | 1,000,000 | 82 s | 82 µs | 2.1 GiB | 296 MiB |
 
 Peak memory is Python allocations under `tracemalloc`, from a separate traced
 run so tracing does not slow the timed ones. As process memory (peak working
-set), the 1000× run used 2.5 GiB of RAM for a 170 MiB input file; almost all of
+set, read in-process in a separate run; not part of the JSON receipt), the
+1000× run used about 2.5 GiB of RAM for a 170 MiB input file; almost all of
 the 296 MiB output is `audit.json`. The 1× per-event figure is mostly fixed
 start-up cost.
 
 **What this says.** A million events a month is still a single-machine batch
-job, and 78 seconds is not a problem for monthly billing. Memory is: every line,
-parsed event and decision is held at once, the per-event cost rises at 1000×
-(54 → 78 µs) as the process carries ~2 GiB of live objects, and 10,000× would,
+job, and 82 seconds is not a problem for monthly billing. Memory is: every line,
+parsed event and decision is held at once, the per-event cost rises with scale
+(55 → 82 µs) as the process carries ~2 GiB of live objects, and 10,000× would,
 extrapolating linearly, need over 20 GiB. So the first change is bounded memory, not a distributed system.
 
-**Where the time goes**, as approximate shares from profiling a 100,000-event
-run: reading and strict parsing about a third, two-thirds of that being the
+**Where the time goes**, as approximate shares from a separate `cProfile` run
+over 100,000 events (taken at 2.0.0 before the last two review rounds, which
+added reconciliation checks but no per-event parsing work; not part of the JSON
+receipt): reading and strict parsing about a third, two-thirds of that being the
 check for unpaired surrogates in every string; classification about 30%, mostly
 parsing timestamps into exact fractions; writing the indented JSON outputs
 about a quarter; reconciliation about 13% (it runs before publishing and again
@@ -160,6 +164,7 @@ pinned by a test:
 - **Units must be a JSON integer**: `1.0`, `"5"` and `true` are `invalid_units`.
 - **Timestamps need seconds and an explicit offset** (`Z` or `±HH:MM`); anything else is `invalid_ts` / `invalid_ingested_at`.
 - **Tiers with no units produce no line**; an account with no usage gets subscription lines only.
+- **Every tier states `to_units`**, `null` for the open last tier. An omitted key is a configuration error, not an open bracket.
 - **The period-end plan** is the segment covering the last local day of the period; a segment starting on the exclusive end date does not count. If no segment covers that day, the configuration is rejected.
 - **Days covered by no plan segment are not charged.** Overlapping segments are rejected.
 - **A missing `credit_minor` is an error**, not zero.
