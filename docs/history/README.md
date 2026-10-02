@@ -6,3 +6,4 @@ not as current documentation: features mentioned here may since have moved to a
 feature branch (see "Branches" in the top-level README).
 
 - [2026-10-01-final-review-design.md](2026-10-01-final-review-design.md) — decisions taken in the final review round before 1.2.0.
+- [2026-10-02-validation-fixes-design.md](2026-10-02-validation-fixes-design.md) — the output-validation fixes from the third review round and why they were done as targeted guards.

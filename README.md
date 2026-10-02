@@ -222,7 +222,7 @@ src/rvn_ledger/
   diagnostics.py   explain
 examples/demo/     a hand-checked synthetic month
 scripts/           e2e.py, benchmark.py
-docs/history/      working notes from development review rounds
+docs/history/      working notes from development review rounds (index in its README)
 ```
 
 ## Branches
