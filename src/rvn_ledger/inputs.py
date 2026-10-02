@@ -173,7 +173,18 @@ def _recover_identity(line: bytes) -> Identity | None:
     return Identity(event_id, sequence)
 
 
+UTF8_BOM = b'\xef\xbb\xbf'
+
+
 def read_events(raw: bytes) -> list[EventRow]:
+    """Every physical line, hashed exactly as written.
+
+    A UTF-8 byte order mark at the start of the file belongs to the file's encoding, not to its
+    first record: it is removed before the first line is parsed or its identity salvaged, so the
+    first copy of an event does not lose deduplication to a later copy over an editor artefact.
+    The line's SHA-256 and the manifest's file hash still cover the BOM bytes. A BOM anywhere
+    else is not a file mark and is rejected like any other stray bytes.
+    """
     rows = []
     # Split only at LF, not at arbitrary Unicode or control characters.
     lines = raw.split(b'\n')
@@ -182,6 +193,8 @@ def read_events(raw: bytes) -> list[EventRow]:
     for index, line in enumerate(lines, 1):
         source = line + (b'\n' if index < len(lines) or raw.endswith(b'\n') else b'')
         digest = hashlib.sha256(source).hexdigest()
+        if index == 1 and line.startswith(UTF8_BOM):
+            line = line[len(UTF8_BOM):]
         try:
             value = _parse(line)
         except UnicodeDecodeError:

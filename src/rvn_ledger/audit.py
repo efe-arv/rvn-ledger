@@ -9,10 +9,19 @@ and the attributed quarantined lines.
 `rvn-ledger check` re-runs on published files. It does two kinds of checks:
 
 - Rule-independent invariants: every raw line has exactly one decision, every
-  accepted event is the source of exactly one invoice metric, source units sum
-  to billable units, tier units sum to billable units, subtotal is the sum of
-  the lines, total = subtotal - credit applied and is never negative, credit
-  applied + remaining = credit, and every counter in the manifest matches.
+  event identity has exactly one canonical line, every accepted event is the
+  source of exactly one invoice metric, source units sum to billable units,
+  tier units sum to billable units, subtotal is the sum of the lines, total =
+  subtotal - credit applied and is never negative, credit applied + remaining
+  = credit, and every counter in the manifest matches.
+- Period consistency (external review F1): the manifest rules are a valid
+  billing period read through the same strict parsers as period.json; every
+  subscription segment lies inside it, uses its denominator, is chronological
+  and non-overlapping; the period-end plan is the segment covering the final
+  local day and is the plan every usage line was priced on; billable_units
+  list the manifest metrics in their order.
+- Provenance consistency (external review F3): the manifest names the TZif
+  source and hash of exactly the zones the invoices were billed in.
 - Recomputation from the recorded pricing inputs (fee, days, tariff, credit)
   through the SAME rule functions the invoice builder uses (`money`, `tiers`).
   The trail must reproduce the published lines exactly.
@@ -23,12 +32,14 @@ the rules are the right rules is the job of the hand-derived tests.
 Any mismatch is an AuditError; a run is never published on top of one.
 """
 from collections import Counter
-from datetime import date
-from .inputs import EventRow
+from datetime import date, timedelta
+from .inputs import EventRow, InputError, local_date, period_metrics
 from .invoice import Invoice
 from .money import apply_credit, subscription_amount, subscription_formula, usage_formula
 from .selection import Classification, TERMINAL_STATUSES
+from .subscription import period_days
 from .tiers import price_usage, tiers_from_document
+from .timing import ZONE_SOURCES, provenance_summary
 
 
 class AuditError(RuntimeError):
@@ -38,6 +49,30 @@ class AuditError(RuntimeError):
 def _require(condition, message):
     if not condition:
         raise AuditError(message)
+
+
+def _sha256_text(value) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
+
+
+def _local_date(value, what: str) -> date:
+    try:
+        return local_date(value, what)   # the one strict YYYY-MM-DD parser, shared with the run
+    except InputError as exc:
+        raise AuditError(str(exc)) from exc
+
+
+def _manifest_period(rules: dict) -> tuple[date, date, int, list]:
+    """The manifest's billing period, read through the same validators as period.json (review F1)."""
+    try:
+        start, end, days = period_days(rules)
+        metrics = list(period_metrics(rules))
+    except InputError as exc:
+        raise AuditError(f'manifest rules do not describe a valid billing period: {exc}') from exc
+    late = rules.get('late_cutoff_hours_after_period_end')
+    _require(type(late) is int and late >= 0, 'manifest late cutoff must be a nonnegative integer of hours')
+    _require(isinstance(rules.get('source'), str) and rules['source'], 'manifest rules must name their source')
+    return start, end, days, metrics
 
 
 def build_audit(rows: list[EventRow], classification: Classification, invoices: list[Invoice], usage: dict,
@@ -100,9 +135,7 @@ def reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manifes
         _require(set(manifest['inputs']) == required_inputs, 'manifest inputs must contain exactly the four required names')
         for name, metadata in manifest['inputs'].items():
             _require(set(metadata) == {'sha256', 'bytes', 'records'}, f'{name}: invalid input metadata fields')
-            digest = metadata.get('sha256')
-            _require(isinstance(digest, str) and len(digest) == 64
-                     and all(c in '0123456789abcdef' for c in digest), f'{name}: invalid input sha256')
+            _require(_sha256_text(metadata.get('sha256')), f'{name}: invalid input sha256')
             for field in ('bytes', 'records'):
                 value = metadata.get(field)
                 _require(type(value) is int and value >= 0, f'{name}: invalid input {field}')
@@ -123,6 +156,8 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
     """Independent invariant check over the published documents; raises AuditError on the first inconsistency."""
     decisions = audit['decisions']
     counts = manifest['counts']
+    period_start, period_end, days_in_period, metrics = _manifest_period(manifest['rules'])
+    last_day = period_end - timedelta(days=1)
     _require([d['line'] for d in decisions] == list(range(1, len(decisions) + 1)), 'decisions must cover raw lines 1..n exactly once')
     _require(counts['raw'] == len(decisions), 'manifest raw count differs from the number of decisions')
     by_status = Counter(d['status'] for d in decisions)
@@ -137,15 +172,23 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
     _require(manifest['quarantine_reasons'] == dict(sorted(Counter(d['reasons'][0] for d in quarantined).items())), 'quarantine reason counts differ')
 
     decision_by_line = {d['line']: d for d in decisions}
+    canonical = {}   # event_id -> canonical line, over every decision that took part in deduplication (review F2)
     for decision in decisions:
-        digest = decision['sha256']
-        _require(isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest),
-                 'invalid source hash representation (raw source verification is a separate gate)')
+        _require(_sha256_text(decision['sha256']), 'invalid source hash representation (raw source verification is a separate gate)')
+        event_id = decision['event_id']
         if decision['status'] == 'duplicate_ignored':
             target = decision_by_line.get(decision['canonical_line'])
             _require(target is not None and target is not decision and target['status'] != 'duplicate_ignored'
-                     and decision['event_id'] is not None and target['event_id'] == decision['event_id'],
+                     and isinstance(event_id, str) and event_id and target['event_id'] == event_id,
                      'duplicate target must be a canonical decision with the same identity')
+            continue
+        if decision['status'] == 'accepted':
+            _require(isinstance(event_id, str) and event_id, f'line {decision["line"]}: an accepted event must carry a nonempty string identity')
+        if event_id is None or (decision['status'] == 'quarantined' and decision['reasons'][0] == 'invalid_ingest_seq'):
+            continue   # no readable identity, or a readable identity whose sequence kept it out of deduplication
+        _require(isinstance(event_id, str) and event_id, f'line {decision["line"]}: identity must be a nonempty string')
+        _require(event_id not in canonical, f'line {decision["line"]}: event identity already has canonical line {canonical.get(event_id)}')
+        canonical[event_id] = decision['line']
     used_sources = Counter()
     _require([inv['account_id'] for inv in invoices] == sorted(inv['account_id'] for inv in invoices), 'invoices are not sorted by account_id')
     _require(counts['invoices'] == len(invoices) == len(audit['invoices']), 'invoice count differs from manifest or trail')
@@ -156,18 +199,32 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
         _require(trail is not None, f'{inv["account_id"]}: no audit trail')
         where = inv['account_id']
         _require(inv['currency'] == trail['currency'] and inv['timezone'] == trail['timezone'], f'{where}: currency or timezone differs from the trail')
+        end_plan = trail['period_end_plan_id']
+        _require(isinstance(end_plan, str) and end_plan, f'{where}: period_end_plan_id must be a nonempty string')
         expected_lines = []
+        previous_end, covering = None, None
         for seg in trail['subscription_lines']:
-            days = (date.fromisoformat(seg['to']) - date.fromisoformat(seg['from'])).days
+            start, end = _local_date(seg['from'], f'{where}: segment from'), _local_date(seg['to'], f'{where}: segment to')
+            days = (end - start).days
             _require(days == seg['days'] and 0 < days <= seg['days_in_period'], f'{where}: segment days do not match its dates')
+            _require(seg['days_in_period'] == days_in_period, f'{where}: segment denominator differs from the manifest days_in_period')
+            _require(period_start <= start and end <= period_end, f'{where}: subscription segment lies outside the manifest period')
+            _require(previous_end is None or previous_end <= start, f'{where}: subscription segments overlap or are out of order')
+            _require(isinstance(seg['plan_id'], str) and seg['plan_id'], f'{where}: segment plan_id must be a nonempty string')
+            previous_end = end
+            if start <= last_day < end:
+                covering = seg['plan_id']
             _require(seg['amount_minor'] == subscription_amount(seg['fee_minor'], seg['days'], seg['days_in_period']),
                      f'{where}: subscription amount does not recompute')
             _require(seg['formula'] == subscription_formula(seg['fee_minor'], seg['days'], seg['days_in_period'], seg['amount_minor']),
                      f'{where}: subscription formula differs from arithmetic')
             expected_lines.append({'kind': 'subscription', 'plan_id': seg['plan_id'], 'days': seg['days'], 'amount_minor': seg['amount_minor']})
+        _require(covering == end_plan, f'{where}: period_end_plan_id is not the plan covering the final local day of the period')
+        _require(list(inv['billable_units']) == metrics, f'{where}: billable_units do not list the manifest metrics in their order')
+        _require(set(trail['usage_sources']) == set(metrics) and set(trail['usage_tariffs']) == set(metrics)
+                 and all(u['metric'] in metrics for u in trail['usage_lines']), f'{where}: trail metrics differ from the manifest')
         for metric, units in inv['billable_units'].items():
-            sources = trail['usage_sources'].get(metric)
-            _require(sources is not None, f'{where}/{metric}: no sources in the trail')
+            sources = trail['usage_sources'][metric]
             _require(sum(s['units'] for s in sources) == units, f'{where}/{metric}: source units do not sum to billable_units')
             for source in sources:
                 decision = decision_by_line.get(source['line'])
@@ -177,6 +234,7 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
             tier_lines = [u for u in trail['usage_lines'] if u['metric'] == metric]
             _require(sum(u['units'] for u in tier_lines) == units, f'{where}/{metric}: tier units do not sum to billable_units')
             tariff = trail['usage_tariffs'][metric]
+            _require(tariff['plan_id'] == end_plan, f'{where}/{metric}: usage priced on a plan other than the period-end plan')
             recomputed = [{'metric': line.metric, 'plan_id': tariff['plan_id'], 'tier_from': line.tier_from, 'tier_to': line.tier_to,
                            'units': line.units, 'unit_price_micros': line.unit_price_micros, 'amount_minor': line.amount_minor,
                            'formula': usage_formula(line.units, line.unit_price_micros, line.amount_minor)}
@@ -212,3 +270,12 @@ def _reconcile(invoices: list[dict], quarantine: list[dict], audit: dict, manife
              'every accepted event must be a source of exactly one invoice metric')
     _require(counts['subscription_lines'] == subscription_lines and counts['usage_lines'] == usage_lines, 'manifest line counts differ from the trail')
     _require(manifest['totals_by_currency'] == dict(sorted(totals.items())), 'manifest totals by currency do not reconcile')
+    provenance = manifest['versions'].get('timezones')
+    _require(isinstance(provenance, dict) and list(provenance) == sorted({inv['timezone'] for inv in invoices}),
+             'manifest timezone provenance must name exactly the invoiced zones in sorted order')
+    for key, record in provenance.items():
+        _require(isinstance(record, dict) and set(record) == {'source', 'version', 'sha256'} and record['source'] in ZONE_SOURCES
+                 and isinstance(record['version'], str), f'{key}: invalid timezone provenance record')
+        _require(record['sha256'] is None if record['source'] == 'unknown' else _sha256_text(record['sha256']),
+                 f'{key}: timezone provenance hash does not fit its source kind')
+    _require(manifest['versions']['tzdata'] == provenance_summary(provenance), 'manifest tzdata summary differs from the timezone provenance')

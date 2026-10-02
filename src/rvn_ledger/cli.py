@@ -128,7 +128,8 @@ def main(argv=None) -> int:
         human_display(f'error: {exc}', file=sys.stderr)
         return 2
     except (OutputError, OSError) as exc:
-        human_display(f'{"check failed" if args.command == "check" else "publication failed"}: {exc}', file=sys.stderr)
+        # Only `run` publishes; `check` and `explain` read a published set, so their failures are check failures.
+        human_display(f'{"publication failed" if args.command == "run" else "check failed"}: {exc}', file=sys.stderr)
         return 2
     except AuditError as exc:
         if args.command in ('check', 'explain'):

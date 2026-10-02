@@ -18,6 +18,7 @@ from . import __version__
 from .inputs import InputError, read_events, read_json
 from .invoice import assemble_invoices
 from .selection import classify_prepared
+from .timing import provenance_summary, timezone_provenance
 
 LEDGER_VERSION = __version__
 RULES_SOURCE = 'billing rules 1-9 and the output contract described in README.md'
@@ -32,19 +33,16 @@ class LedgerRun:
     manifest: dict
 
 
-def tzdata_version() -> str:
-    """The time zone data zoneinfo actually resolves against: the system TZPATH tree first, else the tzdata package."""
-    import zoneinfo
-    for root in zoneinfo.TZPATH:
-        if (Path(root) / 'UTC').is_file():                       # zoneinfo searches TZPATH before the package
-            path = Path(root) / 'tzdata.zi'
-            first = path.read_text(errors='replace').splitlines()[:1] if path.is_file() else []
-            return f'system {first[0].lstrip("# ").strip() if first else "(version file absent)"}'
-    try:
-        from importlib.metadata import version
-        return f'tzdata package {version("tzdata")}'
-    except Exception:  # noqa: BLE001 - no system tree and no package: record that honestly
-        return 'unknown'
+def tzdata_version(zones) -> str:
+    """One line naming the time zone data the given zone keys resolve against on this host now.
+
+    Resolution is per zone (review F3): zoneinfo takes a file under any TZPATH root before the
+    tzdata package, so one root holding a single zone file bills that zone on other rules than
+    the package the rest of the zones come from. The summary says 'mixed: ...' in that case; the
+    manifest's `versions.timezones` carries the per-zone source, version and TZif hash, taken
+    from the bytes the run's bounds were built from rather than from this fresh read.
+    """
+    return provenance_summary(timezone_provenance(zones))
 
 
 def code_hashes() -> dict:
@@ -89,6 +87,8 @@ def run_ledger(raw: dict) -> LedgerRun:
     counts.update({'invoices': len(documents), 'quarantine_entries': len(quarantine),
                    'subscription_lines': sum(len(inv.subscription.segments) for inv in invoices),
                    'usage_lines': sum(len(inv.usage_lines) for inv in invoices)})
+    # The records of the TZif bytes each account's bounds were built from, not a fresh read of the host.
+    provenance = timezone_provenance(context.bounds[account_id].zone for account_id in context.accounts)
     manifest = {
         'ledger_version': LEDGER_VERSION,
         'rules': {'source': RULES_SOURCE, 'period_start_local': period['period_start_local'],
@@ -102,7 +102,7 @@ def run_ledger(raw: dict) -> LedgerRun:
         'quarantine_reasons': dict(sorted(Counter(entry['reason'] for entry in quarantine).items())),
         'totals_by_currency': dict(sorted(totals.items())),
         'versions': {'python': platform.python_version(), 'implementation': platform.python_implementation(),
-                     'tzdata': tzdata_version(), 'code_sha256': code_hashes()},
+                     'tzdata': provenance_summary(provenance), 'timezones': provenance, 'code_sha256': code_hashes()},
         'audit_trail': 'audit.json',
     }
     return LedgerRun(documents, quarantine, audit, manifest)

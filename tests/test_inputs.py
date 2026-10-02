@@ -188,3 +188,44 @@ class IntegerBoundaryTests(unittest.TestCase):
             self.assertEqual(run_cli('check', '--out', out, env=env).returncode, 0)
             invoices = json.loads((out / 'invoices.json').read_bytes())
             self.assertEqual(invoices[0]['billable_units']['api_calls'], largest * 3)
+
+
+class LeadingByteOrderMarkTests(unittest.TestCase):
+    """A UTF-8 byte order mark at the very start of events.jsonl is an encoding artefact of the file,
+    not of its first record: it is removed before the first line is parsed or its identity salvaged,
+    while the line's recorded SHA-256 (and the file hash in the manifest) stay those of the raw bytes.
+    A BOM anywhere else, or on configuration files, is still an error."""
+
+    BOM = b'\xef\xbb\xbf'
+    LINE = b'{"event_id":"a","ingest_seq":1}'
+
+    def test_first_line_bom_is_stripped_for_parsing_but_hashed_as_written(self):
+        rows = read_events(self.BOM + self.LINE + b'\n' + self.LINE + b'\n')
+        self.assertIsNone(rows[0].error)
+        self.assertEqual(rows[0].value, {'event_id': 'a', 'ingest_seq': 1})
+        self.assertEqual(rows[0].sha256, hashlib.sha256(self.BOM + self.LINE + b'\n').hexdigest())
+        self.assertEqual(rows[1].sha256, hashlib.sha256(self.LINE + b'\n').hexdigest())
+        # The final line without a trailing newline is hashed as written too.
+        self.assertEqual(read_events(self.BOM + self.LINE)[0].sha256, hashlib.sha256(self.BOM + self.LINE).hexdigest())
+
+    def test_first_line_bom_does_not_block_identity_salvage(self):
+        from rvn_ledger.inputs import Identity
+        row = read_events(self.BOM + b'{"event_id":"a","ingest_seq":1,"units":NaN}\n')[0]
+        self.assertEqual(row.error, 'invalid_json')
+        self.assertIsNone(row.value)
+        self.assertEqual(row.salvaged_identity, Identity('a', 1))
+
+    def test_bom_elsewhere_is_still_rejected(self):
+        later = read_events(self.LINE + b'\n' + self.BOM + self.LINE + b'\n')
+        self.assertIsNone(later[0].error)
+        self.assertEqual(later[1].error, 'invalid_json')
+        self.assertIsNone(later[1].salvaged_identity)
+        doubled = read_events(self.BOM + self.BOM + self.LINE + b'\n')[0]
+        self.assertEqual(doubled.error, 'invalid_json')
+        self.assertIsNone(doubled.salvaged_identity)
+        self.assertEqual(read_events(self.BOM + b'\n')[0].error, 'invalid_json')   # a BOM alone is an empty first line
+        self.assertEqual(read_events(self.BOM)[0].error, 'invalid_json')
+        self.assertEqual(len(read_events(self.BOM)), 1)
+        for name in ('accounts.json', 'plans.json', 'period.json'):
+            with self.subTest(name=name), self.assertRaises(InputError):
+                read_json(self.BOM + b'{}', name)

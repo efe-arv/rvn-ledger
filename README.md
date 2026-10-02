@@ -79,7 +79,8 @@ the run before anything is written, because every invoice would be suspect.
 - **`events.jsonl`** — one JSON object per line:
   `{"event_id", "ingest_seq", "account_id", "metric", "units", "ts", "ingested_at"}`.
   `ts` is when the usage happened and `ingested_at` when it was received, both
-  ISO 8601 with an explicit offset.
+  ISO 8601 with an explicit offset. A UTF-8 byte order mark at the start of the
+  file is ignored for parsing; every hash still covers the bytes as written.
 - **`accounts.json`** — accounts with an IANA `timezone`, a `currency`, a
   `credit_minor` and dated `plan_segments` (`[from, to)` local dates).
 - **`plans.json`** — per plan and currency: a full-period `subscription_fee_minor`
@@ -118,7 +119,7 @@ unreadable timestamp. [ENGINEERING.md](ENGINEERING.md) explains each choice.
 | `invoices.json` | One invoice per account, sorted by `account_id` (shape below). |
 | `quarantine.json` | `[{"event_id", "reason"}]` in source-line order. |
 | `audit.json` | Every raw line's decision (status, reasons, the winning line for a duplicate, the line's SHA-256) and, per invoice, the plan segments, the tariff used, each line's formula, the source events per metric and the credit arithmetic. |
-| `manifest.json` | Input hashes and sizes, counts per outcome, totals per currency, Python / tzdata / code versions, and output hashes. |
+| `manifest.json` | Input hashes and sizes, counts per outcome, totals per currency, Python / tzdata / code versions, the source and TZif hash of every billed time zone, and output hashes. |
 
 An invoice from the demo — a plan change on the 16th, usage crossing a tier, a
 half-unit storage line rounded up, and a credit of 5:
@@ -170,8 +171,11 @@ lists the accepted events (id, source line, units) that sum to it, and
 - **`rvn-ledger check`** re-hashes the published files against the manifest and
   reconciles invoices with the audit trail: dispositions cover every line once,
   every accepted event is billed exactly once, units are conserved into tiers,
-  subtotal = sum of lines, total = subtotal − credit and never negative, and every
-  amount recomputes from its recorded inputs. `run` performs the same check before
+  subtotal = sum of lines, total = subtotal − credit and never negative, every
+  amount recomputes from its recorded inputs, every event identity has one
+  canonical line, the manifest rules are a valid period that the segments, the
+  period-end plan and the metrics agree with, and the manifest names the time-zone
+  data of exactly the zones that were billed. `run` performs the same check before
   it writes anything.
 - **`tests/test_hazards.py`** — one end-to-end test per billing rule and input
   hazard, small enough to verify by hand. Start here.
